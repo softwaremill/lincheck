@@ -43,6 +43,12 @@ class ConcurrentDequeTest : AbstractLincheckTest() {
     @Operation
     fun pollLast() = deque.pollLast()
 
+    @Operation
+    fun peekFirst() = deque.peekFirst()
+
+    @Operation
+    fun peekLast() = deque.peekLast()
+
     override fun extractState() = deque.toList()
 
     override fun <O : Options<O, *>> O.customize() {

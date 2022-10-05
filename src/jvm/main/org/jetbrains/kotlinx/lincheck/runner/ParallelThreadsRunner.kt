@@ -28,6 +28,7 @@ import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.runner.FixedActiveThreadsExecutor.TestThread
 import org.jetbrains.kotlinx.lincheck.runner.UseClocks.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import org.objectweb.asm.*
 import java.lang.reflect.*
 import java.util.concurrent.*
@@ -53,9 +54,9 @@ internal open class ParallelThreadsRunner(
     private val useClocks: UseClocks // specifies whether `HBClock`-s should always be used or with some probability
 ) : Runner(strategy, testClass, validationFunctions, stateRepresentationFunction) {
     private val runnerHash = this.hashCode() // helps to distinguish this runner threads from others
-    private val executor = FixedActiveThreadsExecutor(scenario.threads, runnerHash) // shoukd be closed in `close()`
+    internal val executor = FixedActiveThreadsExecutor(scenario.threads, runnerHash) // shoukd be closed in `close()`
 
-    private lateinit var testInstance: Any
+    internal lateinit var testInstance: Any
     private lateinit var testThreadExecutions: Array<TestThreadExecution>
 
     private var suspensionPointResults = List(scenario.threads) { t ->
@@ -143,6 +144,8 @@ internal open class ParallelThreadsRunner(
     }
 
     private fun reset() {
+        // Do not let visualization see previous object
+        testInstance = Any()
         testInstance = testClass.newInstance()
         testThreadExecutions.forEachIndexed { t, ex ->
             ex.testInstance = testInstance
@@ -260,6 +263,7 @@ internal open class ParallelThreadsRunner(
                 }
             }
         }
+        onThreadChange()
         val afterInitStateRepresentation = constructStateRepresentation()
         try {
             executor.submitAndAwait(testThreadExecutions, timeoutMs)
@@ -283,6 +287,7 @@ internal open class ParallelThreadsRunner(
         val afterParallelStateRepresentation = constructStateRepresentation()
         val dummyCompletion = Continuation<Any?>(EmptyCoroutineContext) {}
         var postPartSuspended = false
+//        onThreadChange()
         val postResults = scenario.postExecution.mapIndexed { i, postActor ->
             // no actors are executed after suspension of a post part
             val result = if (postPartSuspended) {

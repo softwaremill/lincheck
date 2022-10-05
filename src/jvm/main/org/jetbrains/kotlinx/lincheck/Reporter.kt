@@ -42,6 +42,10 @@ class Reporter constructor(val logLevel: LoggingLevel) {
         appendFailure(failure)
     }
 
+    fun logFailedIterationWarn(failure: LincheckFailure) = log(WARN) {
+        appendFailure(failure)
+    }
+
     fun logScenarioMinimization(scenario: ExecutionScenario) = log(INFO) {
         appendln("\nInvalid interleaving found, trying to minimize the scenario below:")
         appendExecutionScenario(scenario)

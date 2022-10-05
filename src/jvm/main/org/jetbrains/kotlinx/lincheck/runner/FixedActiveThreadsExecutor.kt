@@ -221,7 +221,7 @@ internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash:
         }
     }
 
-    class TestThread(val iThread: Int, val runnerHash: Int, r: Runnable) : Thread(r, "FixedActiveThreadsExecutor@$runnerHash-$iThread") {
+    class TestThread(val iThread: Int, val runnerHash: Int, r: Runnable) : Thread(r, "Lincheck-RunnerThread-$iThread") {
         var cont: CancellableContinuation<*>? = null
     }
 

@@ -27,6 +27,7 @@ import org.jetbrains.kotlinx.lincheck.CancellationResult.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.runner.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import org.objectweb.asm.*
 import java.io.*
@@ -54,7 +55,7 @@ abstract class ManagedStrategy(
     protected val nThreads: Int = scenario.parallelExecution.size
     // Runner for scenario invocations,
     // can be replaced with a new one for trace construction.
-    private var runner: Runner
+    internal var runner: Runner
     // Shares location ids between class transformers in order
     // to keep them different in different code locations.
     private val codeLocationIdProvider = CodeLocationIdProvider()
@@ -115,7 +116,9 @@ abstract class ManagedStrategy(
     }
 
     private fun createRunner(): Runner =
-        ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction, testCfg.timeoutMs, UseClocks.ALWAYS)
+        ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction,
+            if (this is ModelCheckingStrategy && this.replay) Long.MAX_VALUE / 2 else testCfg.timeoutMs,
+            UseClocks.ALWAYS)
 
     private fun initializeManagedState() {
         ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
@@ -218,6 +221,7 @@ abstract class ManagedStrategy(
         runner = createRunner()
         initializeManagedState()
         runner.initialize()
+        (this as ModelCheckingStrategy).currentInterleaving = this.currentInterleaving.copy()
         val loggedResults = runInvocation()
         val sameResultTypes = loggedResults.javaClass == failingResult.javaClass
         val sameResults = loggedResults !is CompletedInvocationResult || failingResult !is CompletedInvocationResult || loggedResults.results == failingResult.results
@@ -230,7 +234,7 @@ abstract class ManagedStrategy(
                 appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace, testCfg.verboseTrace)).toString())
             }.toString()
         }
-        return Trace(traceCollector!!.trace, testCfg.verboseTrace)
+        return Trace(traceCollector!!.trace, testCfg.verboseTrace || (this is ModelCheckingStrategy && this.replay))
     }
 
     /**
@@ -408,7 +412,7 @@ abstract class ManagedStrategy(
      * The execution in an ignored section (added by transformer) or not in a test thread must not add switch points.
      * Additionally, after [ForcibleExecutionFinishException] everything is ignored.
      */
-    private fun inIgnoredSection(iThread: Int): Boolean =
+    internal fun inIgnoredSection(iThread: Int): Boolean =
         !isTestThread(iThread) || ignoredSectionDepth[iThread] > 0 || suddenInvocationResult != null
 
     // == LISTENING METHODS ==
@@ -440,7 +444,7 @@ abstract class ManagedStrategy(
     internal fun beforeAtomicMethodCall(iThread: Int, codeLocation: Int) {
         if (!isTestThread(iThread)) return
         // re-use last call trace point
-        newSwitchPoint(iThread, codeLocation, callStackTrace[iThread].lastOrNull()?.call)
+        newSwitchPoint(iThread, codeLocation, callStackTrace[iThread].lastOrNull()?.call?.let { AtomicCallTracePoint(it) })
     }
 
     /**
@@ -703,6 +707,8 @@ abstract class ManagedStrategy(
     private inner class TraceCollector {
         private val _trace = mutableListOf<TracePoint>()
         val trace: List<TracePoint> = _trace
+
+        val nextEventId get() = trace.size
 
         fun newSwitch(iThread: Int, reason: SwitchReason) {
             _trace += SwitchEventTracePoint(iThread, currentActorId[iThread], reason, callStackTrace[iThread].toList())

@@ -22,8 +22,12 @@
 package org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking
 
 import org.jetbrains.kotlinx.lincheck.execution.*
+import org.jetbrains.kotlinx.lincheck.onThreadChange
+import org.jetbrains.kotlinx.lincheck.replay
+import org.jetbrains.kotlinx.lincheck.runner.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
 import org.jetbrains.kotlinx.lincheck.strategy.managed.*
+import org.jetbrains.kotlinx.lincheck.testFailed
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import java.lang.reflect.*
 import kotlin.random.*
@@ -49,8 +53,9 @@ internal class ModelCheckingStrategy(
         scenario: ExecutionScenario,
         validationFunctions: List<Method>,
         stateRepresentation: Method?,
-        verifier: Verifier
-) : ManagedStrategy(testClass, scenario, verifier, validationFunctions, stateRepresentation, testCfg) {
+        verifier: Verifier,
+        var replay: Boolean
+) : ManagedStrategy(testClass, scenario, verifier, validationFunctions, if (replay) null else stateRepresentation, testCfg) {
     // The number of invocations that the strategy is eligible to use to search for an incorrect execution.
     private val maxInvocations = testCfg.invocationsPerIteration
     // The number of already used invocations.
@@ -63,7 +68,33 @@ internal class ModelCheckingStrategy(
     // This random is used for choosing the next unexplored interleaving node in the tree.
     private val generationRandom = Random(0)
     // The interleaving that will be studied on the next invocation.
-    private lateinit var currentInterleaving: Interleaving
+    internal lateinit var currentInterleaving: Interleaving
+
+    private var eventIdProvider = EventCounterProvider()
+
+    val shouldInvokeBeforeEvent get() =
+        Thread.currentThread() is FixedActiveThreadsExecutor.TestThread &&
+            !inIgnoredSection((Thread.currentThread() as FixedActiveThreadsExecutor.TestThread).iThread)
+
+    private class EventCounterProvider {
+        var lastId = 0
+            private set
+        fun nextId() = lastId++
+    }
+
+    internal fun nextEventId() =
+        eventIdProvider.nextId()
+
+    internal fun readNextEventId() =
+        eventIdProvider.lastId
+
+    var goodPoints: MutableSet<Int>? = null
+    internal fun isGoodPoint(beforeEventId: Int) = goodPoints.let { it == null || it.contains(beforeEventId) }
+
+    private var beforeIdMap: Map<Int, Int>? = null
+
+    internal fun transformBeforeEventId(beforeEventId: Int): Int =
+        if (beforeIdMap == null) beforeEventId else beforeIdMap!![beforeEventId]!!
 
     override fun runImpl(): LincheckFailure? {
         while (usedInvocations < maxInvocations) {
@@ -71,12 +102,80 @@ internal class ModelCheckingStrategy(
             currentInterleaving = root.nextInterleaving() ?: break
             usedInvocations++
             // run invocation and check its results
-            checkResult(runInvocation())?.let { return it }
+            checkResult(runInvocation())?.let { failure ->
+                // An error has been detected!
+                // Should we f**cking replay it?
+                if (replay && failure.trace != null) {
+                    // TODO support actorsBefore / actorsAfter
+                    val results = if (failure is IncorrectResultsFailure) failure.results else null
+                    val strings = with(StringBuilder()) {
+                        appendTrace(failure.scenario, results, failure.trace, insertTitle = false)
+                        toString().split("\n").filter {
+                            !it.contains("|   thread is finished") &&
+                            !it.contains(Regex("\\|( )+switch")) &&
+                            !it.contains(Regex("\\|( )+result:"))
+                        }
+                    }.toTypedArray()
+                    testFailed(strings)
+                    goodPoints = HashSet()
+                    failure.trace.trace
+                        .filter {
+                            it !is SwitchEventTracePoint && it !is FinishThreadTracePoint
+                        }.forEach {
+                            goodPoints!!.add(it.beforeEventId)
+                            it.callStackTrace.forEach { goodPoints!!.add(it.call.beforeEventId) }
+                        }
+
+                    val map = HashMap<Int, Int>()
+                    goodPoints!!.sorted().forEachIndexed { index, id ->
+                        map.put(id, index)
+                    }
+                    beforeIdMap = map
+//                    val replayedInvocationResult = doReplay()
+//                    if (failure is IncorrectResultsFailure) {
+//                        check(failure.results == (replayedInvocationResult as CompletedInvocationResult).results)
+//                        val replayedFailure = checkResult(replayedInvocationResult)
+//                        check(replayedFailure is IncorrectResultsFailure)
+//                        val stringsReplayed = with(StringBuilder()) {
+//                            appendTrace(replayedFailure.scenario, results, replayedFailure.trace!!, insertTitle = false)
+//                            toString().split("\n").toTypedArray()
+//                        }
+//                        check(strings.contentEquals(stringsReplayed))
+//                    }
+
+                    // TODO uncomment me for debug info
+                    // TODO start
+//                    println()
+//                    println()
+//                    println()
+//                    println()
+//                    println()
+//                    println("GOOD POINTS: " + goodPoints!!.size)
+//                    println(goodPoints!!.sorted())
+//                    println("TRACE SIZE: " + strings.size)
+//                    println(strings.joinToString(separator = "\n"))
+                    doReplay()
+                    while (replay()) {
+                        doReplay()
+                    }
+                    // TODO end
+                }
+                return failure
+            }
         }
         return null
     }
 
+    private fun doReplay(): InvocationResult {
+        cleanObjectNumeration()
+        currentInterleaving = currentInterleaving.copy()
+        replay = true
+        eventIdProvider = EventCounterProvider()
+        return runInvocation()
+    }
+
     override fun onNewSwitch(iThread: Int, mustSwitch: Boolean) {
+        onThreadChange()
         if (mustSwitch) {
             // Create new execution position if this is a forced switch.
             // All other execution positions are covered by `shouldSwitch` method,
@@ -95,6 +194,7 @@ internal class ModelCheckingStrategy(
     }
 
     override fun initializeInvocation() {
+        eventIdProvider = EventCounterProvider()
         currentInterleaving.initialize()
         super.initializeInvocation()
     }
@@ -104,7 +204,7 @@ internal class ModelCheckingStrategy(
     /**
      * An abstract node with an execution choice in the interleaving tree.
      */
-    private abstract inner class InterleavingTreeNode {
+    internal abstract inner class InterleavingTreeNode {
         private var fractionUnexplored = 1.0
         lateinit var choices: List<Choice>
         var isFullyExplored: Boolean = false
@@ -192,7 +292,7 @@ internal class ModelCheckingStrategy(
     /**
      * Represents a choice of a position of a thread context switch.
      */
-    private inner class SwitchChoosingNode : InterleavingTreeNode() {
+    internal inner class SwitchChoosingNode : InterleavingTreeNode() {
         override fun nextInterleaving(interleavingBuilder: InterleavingBuilder): Interleaving {
             val isLeaf = maxNumberOfSwitches == interleavingBuilder.numberOfSwitches
             if (isLeaf) {
@@ -209,12 +309,12 @@ internal class ModelCheckingStrategy(
         }
     }
 
-    private inner class Choice(val node: InterleavingTreeNode, val value: Int)
+    internal inner class Choice(val node: InterleavingTreeNode, val value: Int)
 
     /**
      * This class specifies an interleaving that is re-producible.
      */
-    private inner class Interleaving(
+    internal inner class Interleaving(
         private val switchPositions: List<Int>,
         private val threadSwitchChoices: List<Int>,
         private var lastNotInitializedNode: SwitchChoosingNode?
@@ -238,6 +338,8 @@ internal class ModelCheckingStrategy(
                 lastNotInitializedNode = null
             }
         }
+
+        fun copy() = Interleaving(switchPositions, threadSwitchChoices, lastNotInitializedNode)
 
         fun chooseThread(iThread: Int): Int =
             if (nextThreadToSwitch.hasNext()) {
@@ -270,7 +372,7 @@ internal class ModelCheckingStrategy(
         }
     }
 
-    private inner class InterleavingBuilder {
+    internal inner class InterleavingBuilder {
         private val switchPositions = mutableListOf<Int>()
         private val threadSwitchChoices = mutableListOf<Int>()
         private var lastNoninitializedNode: SwitchChoosingNode? = null

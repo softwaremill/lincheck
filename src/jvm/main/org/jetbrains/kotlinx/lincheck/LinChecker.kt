@@ -24,6 +24,8 @@ package org.jetbrains.kotlinx.lincheck
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingCTestConfiguration
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import kotlin.reflect.*
 
@@ -80,7 +82,13 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
             if (failure != null) {
                 val minimizedFailedIteration = if (!minimizeFailedScenario) failure
                                                else failure.minimize(this)
-                reporter.logFailedIteration(minimizedFailedIteration)
+                // Говнокод
+                if (this is ModelCheckingCTestConfiguration) {
+                    reporter.logFailedIterationWarn(minimizedFailedIteration)
+                    minimizedFailedIteration.scenario.run(this, verifier, replay = true)
+                } else {
+                    reporter.logFailedIteration(minimizedFailedIteration)
+                }
                 return minimizedFailedIteration
             }
         }
@@ -135,8 +143,12 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
         } else null
     }
 
-    private fun ExecutionScenario.run(testCfg: CTestConfiguration, verifier: Verifier): LincheckFailure? =
-        testCfg.createStrategy(
+    private fun ExecutionScenario.run(testCfg: CTestConfiguration, verifier: Verifier, replay: Boolean = false): LincheckFailure? =
+        testCfg.apply {
+            if (replay) {
+                (this as ModelCheckingCTestConfiguration).replay = true
+            }
+        }.createStrategy(
             testClass = testClass,
             scenario = this,
             validationFunctions = testStructure.validationFunctions,
@@ -185,7 +197,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
                     val errorMessage = StringBuilder().appendStateEquivalenceViolationMessage(sequentialSpecification).toString()
                     error(errorMessage)
                 } else {
-                    reporter.logStateEquivalenceViolation(sequentialSpecification)
+//                    reporter.logStateEquivalenceViolation(sequentialSpecification)
                 }
             }
         }

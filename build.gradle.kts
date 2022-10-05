@@ -54,6 +54,7 @@ kotlin {
                 api("org.ow2.asm:asm-commons:$asmVersion")
                 api("org.ow2.asm:asm-util:$asmVersion")
                 api("org.reflections:reflections:$reflectionsVersion")
+                implementation("net.sourceforge.plantuml:plantuml:1.2021.3")
             }
         }
 

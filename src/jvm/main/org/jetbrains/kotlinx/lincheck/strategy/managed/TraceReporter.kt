@@ -33,12 +33,13 @@ import kotlin.math.min
 internal fun StringBuilder.appendTrace(
     scenario: ExecutionScenario,
     results: ExecutionResult?,
-    trace: Trace
+    trace: Trace,
+    insertTitle: Boolean = true
 ) {
     val startTraceGraphNode = constructTraceGraph(scenario, results, trace)
     val traceRepresentation = traceGraphToRepresentationList(startTraceGraphNode)
     val traceRepresentationSplitted = splitToColumns(scenario.threads, traceRepresentation)
-    appendln("Parallel part trace:")
+    if (insertTitle) appendln("Parallel part trace:")
     append(printInColumnsCustom(traceRepresentationSplitted) {
         StringBuilder().apply {
             for (i in it.indices) {
@@ -255,7 +256,7 @@ private class ActorNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, c
             lastState?.let { traceRepresentation.add(stateEventRepresentation(iThread, it)) }
             lastInternalEvent.next
         } else {
-            traceRepresentation.add(TraceEventRepresentation(iThread, "$actor"))
+            traceRepresentation.add(TraceEventRepresentation(iThread, "$actor" + if (result != null) ": $result" else ""))
             next
         }
 }
@@ -286,5 +287,9 @@ private class TraceEventRepresentation(val iThread: Int, val representation: Str
 internal fun getObjectNumber(clazz: Class<Any>, obj: Any): Int = objectNumeration
     .computeIfAbsent(clazz) { IdentityHashMap() }
     .computeIfAbsent(obj) { 1 + objectNumeration[clazz]!!.size }
+
+internal fun cleanObjectNumeration() {
+    objectNumeration.clear()
+}
 
 private val objectNumeration = WeakHashMap<Class<Any>, MutableMap<Any, Int>>()

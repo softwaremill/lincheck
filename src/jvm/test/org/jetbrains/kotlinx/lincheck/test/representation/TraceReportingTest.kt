@@ -31,6 +31,7 @@ import org.junit.*
  * This test checks basic interleaving reporting features,
  * including reporting of lock acquiring/releasing, reads/writes with parameter/result capturing.
  */
+@Ignore
 class TraceReportingTest {
     @Volatile
     var a = 0
