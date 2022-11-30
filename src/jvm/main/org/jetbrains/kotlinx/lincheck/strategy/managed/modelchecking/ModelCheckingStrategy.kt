@@ -54,8 +54,8 @@ internal class ModelCheckingStrategy(
         validationFunctions: List<Method>,
         stateRepresentation: Method?,
         verifier: Verifier,
-        var replay: Boolean
-) : ManagedStrategy(testClass, scenario, verifier, validationFunctions, if (replay) null else stateRepresentation, testCfg) {
+        val replay: Boolean,
+) : ManagedStrategy(testClass, scenario, verifier, validationFunctions, stateRepresentation, testCfg) {
     // The number of invocations that the strategy is eligible to use to search for an incorrect execution.
     private val maxInvocations = testCfg.invocationsPerIteration
     // The number of already used invocations.
@@ -82,19 +82,8 @@ internal class ModelCheckingStrategy(
         fun nextId() = lastId++
     }
 
-    internal fun nextEventId() =
-        eventIdProvider.nextId()
-
-    internal fun readNextEventId() =
-        eventIdProvider.lastId
-
-    var goodPoints: MutableSet<Int>? = null
-    internal fun isGoodPoint(beforeEventId: Int) = goodPoints.let { it == null || it.contains(beforeEventId) }
-
-    private var beforeIdMap: Map<Int, Int>? = null
-
-    internal fun transformBeforeEventId(beforeEventId: Int): Int =
-        if (beforeIdMap == null) beforeEventId else beforeIdMap!![beforeEventId]!!
+    internal fun nextEventId() = eventIdProvider.nextId()
+    internal fun readNextEventId() = eventIdProvider.lastId
 
     override fun runImpl(): LincheckFailure? {
         while (usedInvocations < maxInvocations) {
@@ -103,62 +92,39 @@ internal class ModelCheckingStrategy(
             usedInvocations++
             // run invocation and check its results
             checkResult(runInvocation())?.let { failure ->
-                // An error has been detected!
-                // Should we f**cking replay it?
                 if (replay && failure.trace != null) {
                     // TODO support actorsBefore / actorsAfter
+
                     val results = if (failure is IncorrectResultsFailure) failure.results else null
-                    val strings = with(StringBuilder()) {
-                        appendTrace(failure.scenario, results, failure.trace, insertTitle = false)
-                        toString().split("\n").filter {
-                            !it.contains("|   thread is finished") &&
-                            !it.contains(Regex("\\|( )+switch")) &&
-                            !it.contains(Regex("\\|( )+result:"))
+                    var node = constructTraceGraph(scenario, results, failure.trace)
+                    val trace = mutableListOf<String>()
+                    while (node != null) {
+                        var beforeEventId = -1
+                        var representation = ""
+                        when {
+                            node is TraceLeafEvent && node.event !is FinishThreadTracePoint -> {
+                                beforeEventId = node.event.beforeEventId
+                                representation = node.event.toStringImpl(false)
+                            }
+                            node is CallNode -> {
+                                beforeEventId = node.call.beforeEventId
+                                representation = node.call.toStringImpl(false)
+                            }
+                            node is ActorNode -> {
+                                representation = node.actor.toString()
+                            }
                         }
-                    }.toTypedArray()
-                    testFailed(strings)
-                    goodPoints = HashSet()
-                    failure.trace.trace
-                        .filter {
-                            it !is SwitchEventTracePoint && it !is FinishThreadTracePoint
-                        }.forEach {
-                            goodPoints!!.add(it.beforeEventId)
-                            it.callStackTrace.forEach { goodPoints!!.add(it.call.beforeEventId) }
+                        if (representation != "") {
+                            trace.add("${node.iThread};${node.callDepth};${node.shouldBeExpanded};${beforeEventId};${representation}")
                         }
-
-                    val map = HashMap<Int, Int>()
-                    goodPoints!!.sorted().forEachIndexed { index, id ->
-                        map.put(id, index)
+                        node = node.next
                     }
-                    beforeIdMap = map
-//                    val replayedInvocationResult = doReplay()
-//                    if (failure is IncorrectResultsFailure) {
-//                        check(failure.results == (replayedInvocationResult as CompletedInvocationResult).results)
-//                        val replayedFailure = checkResult(replayedInvocationResult)
-//                        check(replayedFailure is IncorrectResultsFailure)
-//                        val stringsReplayed = with(StringBuilder()) {
-//                            appendTrace(replayedFailure.scenario, results, replayedFailure.trace!!, insertTitle = false)
-//                            toString().split("\n").toTypedArray()
-//                        }
-//                        check(strings.contentEquals(stringsReplayed))
-//                    }
+                    testFailed(trace.toTypedArray())
 
-                    // TODO uncomment me for debug info
-                    // TODO start
-//                    println()
-//                    println()
-//                    println()
-//                    println()
-//                    println()
-//                    println("GOOD POINTS: " + goodPoints!!.size)
-//                    println(goodPoints!!.sorted())
-//                    println("TRACE SIZE: " + strings.size)
-//                    println(strings.joinToString(separator = "\n"))
                     doReplay()
                     while (replay()) {
                         doReplay()
                     }
-                    // TODO end
                 }
                 return failure
             }
@@ -169,7 +135,6 @@ internal class ModelCheckingStrategy(
     private fun doReplay(): InvocationResult {
         cleanObjectNumeration()
         currentInterleaving = currentInterleaving.copy()
-        replay = true
         eventIdProvider = EventCounterProvider()
         return runInvocation()
     }

@@ -33,13 +33,12 @@ import kotlin.math.min
 internal fun StringBuilder.appendTrace(
     scenario: ExecutionScenario,
     results: ExecutionResult?,
-    trace: Trace,
-    insertTitle: Boolean = true
+    trace: Trace
 ) {
     val startTraceGraphNode = constructTraceGraph(scenario, results, trace)
     val traceRepresentation = traceGraphToRepresentationList(startTraceGraphNode)
     val traceRepresentationSplitted = splitToColumns(scenario.threads, traceRepresentation)
-    if (insertTitle) appendln("Parallel part trace:")
+    appendln("Parallel part trace:")
     append(printInColumnsCustom(traceRepresentationSplitted) {
         StringBuilder().apply {
             for (i in it.indices) {
@@ -77,7 +76,7 @@ private fun splitToColumns(nThreads: Int, traceRepresentation: List<TraceEventRe
  * `next` edges form a single-directed list in which the order of events is the same as in [trace].
  * `internalEvents` edges form a directed forest.
  */
-private fun constructTraceGraph(scenario: ExecutionScenario, results: ExecutionResult?, trace: Trace): TraceNode? {
+internal fun constructTraceGraph(scenario: ExecutionScenario, results: ExecutionResult?, trace: Trace): TraceNode? {
     val tracePoints = trace.trace
     // last events that were executed for each thread. It is either thread finish events or events before crash
     val lastExecutedEvents = IntArray(scenario.threads) { iThread ->
@@ -170,8 +169,8 @@ private fun traceGraphToRepresentationList(startNode: TraceNode?): List<TraceEve
     return traceRepresentation
 }
 
-private sealed class TraceNode(
-    protected val iThread: Int,
+internal sealed class TraceNode(
+    val iThread: Int,
     last: TraceNode?,
     val verboseTrace: Boolean,
     val callDepth: Int // for tree indentation
@@ -197,12 +196,12 @@ private sealed class TraceNode(
     abstract fun addRepresentationTo(traceRepresentation: MutableList<TraceEventRepresentation>): TraceNode?
 }
 
-private class TraceLeafEvent(
+internal class TraceLeafEvent(
     iThread: Int,
     last: TraceNode?,
     verboseTrace: Boolean,
     callDepth: Int,
-    private val event: TracePoint,
+    val event: TracePoint,
     lastExecutedEvent: Boolean = false
 ) : TraceNode(iThread, last, verboseTrace, callDepth) {
     override val lastState: String? = if (event is StateRepresentationTracePoint) event.stateRepresentation else null
@@ -216,7 +215,7 @@ private class TraceLeafEvent(
     }
 }
 
-private abstract class TraceInnerNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int)
+internal abstract class TraceInnerNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int)
     : TraceNode(iThread, last, verboseTrace,callDepth) {
     override val lastState: String?
         get() = internalEvents.map { it.lastState }.lastOrNull { it != null }
@@ -231,7 +230,7 @@ private abstract class TraceInnerNode(iThread: Int, last: TraceNode?, verboseTra
     }
 }
 
-private class CallNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int, private val call: MethodCallTracePoint)
+internal class CallNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int, val call: MethodCallTracePoint)
     : TraceInnerNode(iThread, last, verboseTrace, callDepth) {
     // suspended method contents should be reported
     override val shouldBeExpanded: Boolean by lazy { call.wasSuspended || super.shouldBeExpanded }
@@ -247,7 +246,7 @@ private class CallNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, ca
         }
 }
 
-private class ActorNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int, private val actor: Actor, private val result: Result?)
+internal class ActorNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int, val actor: Actor, private val result: Result?)
     : TraceInnerNode(iThread, last, verboseTrace, callDepth) {
     override fun addRepresentationTo(traceRepresentation: MutableList<TraceEventRepresentation>): TraceNode? =
         if (!shouldBeExpanded) {
@@ -256,12 +255,12 @@ private class ActorNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, c
             lastState?.let { traceRepresentation.add(stateEventRepresentation(iThread, it)) }
             lastInternalEvent.next
         } else {
-            traceRepresentation.add(TraceEventRepresentation(iThread, "$actor" + if (result != null) ": $result" else ""))
+            traceRepresentation.add(TraceEventRepresentation(iThread, "$actor"))
             next
         }
 }
 
-private class ActorResultNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int, private val result: Result?)
+private class ActorResultNode(iThread: Int, last: TraceNode?, verboseTrace: Boolean, callDepth: Int, val result: Result?)
     : TraceNode(iThread, last, verboseTrace, callDepth) {
     override val lastState: String? = null
     override val lastInternalEvent: TraceNode = this
@@ -281,7 +280,7 @@ private fun TraceNode.traceIndentation() = TRACE_INDENTATION.repeat(callDepth)
 private fun TraceNode.stateEventRepresentation(iThread: Int, stateRepresentation: String) =
     TraceEventRepresentation(iThread, traceIndentation() + "STATE: $stateRepresentation")
 
-private class TraceEventRepresentation(val iThread: Int, val representation: String)
+internal class TraceEventRepresentation(val iThread: Int, val representation: String)
 
 // Should be called only during `appendTrace` invocation
 internal fun getObjectNumber(clazz: Class<Any>, obj: Any): Int = objectNumeration

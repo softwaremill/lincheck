@@ -25,7 +25,6 @@ import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingCTestConfiguration
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import kotlin.reflect.*
 
@@ -82,8 +81,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
             if (failure != null) {
                 val minimizedFailedIteration = if (!minimizeFailedScenario) failure
                                                else failure.minimize(this)
-                // Говнокод
-                if (this is ModelCheckingCTestConfiguration) {
+                if (ideaPluginEnabled()) {
                     reporter.logFailedIterationWarn(minimizedFailedIteration)
                     minimizedFailedIteration.scenario.run(this, verifier, replay = true)
                 } else {
@@ -145,9 +143,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
 
     private fun ExecutionScenario.run(testCfg: CTestConfiguration, verifier: Verifier, replay: Boolean = false): LincheckFailure? =
         testCfg.apply {
-            if (replay) {
-                (this as ModelCheckingCTestConfiguration).replay = true
-            }
+            (this as? ModelCheckingCTestConfiguration)?.also { it.replay = replay }
         }.createStrategy(
             testClass = testClass,
             scenario = this,
@@ -197,7 +193,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
                     val errorMessage = StringBuilder().appendStateEquivalenceViolationMessage(sequentialSpecification).toString()
                     error(errorMessage)
                 } else {
-//                    reporter.logStateEquivalenceViolation(sequentialSpecification)
+                    reporter.logStateEquivalenceViolation(sequentialSpecification)
                 }
             }
         }

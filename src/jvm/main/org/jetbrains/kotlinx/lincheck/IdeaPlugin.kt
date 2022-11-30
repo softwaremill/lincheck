@@ -27,7 +27,10 @@ import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelChecki
 
 // Invoked by Lincheck after the minimization is applied. DO NOT FORGET TO TURN OFF THE RUNNER TIMEOUTS.
 fun testFailed(trace: Array<String>) {
-//    println(trace.contentToString())
+}
+
+fun ideaPluginEnabled(): Boolean {
+    return false // should be replaced with `true` to debug the failure
 }
 
 fun replay(): Boolean {
@@ -43,8 +46,6 @@ fun beforeEvent(eventId: Int, type: String) {
         }
     }
     strategy.leaveIgnoredSection(strategy.currentThreadNumber())
-//    if (strategy.goodPoints != null)
-//        println("$eventId $type ${Exception().stackTrace[1]}")
 }
 
 fun visualizeInstance(s: String) {}

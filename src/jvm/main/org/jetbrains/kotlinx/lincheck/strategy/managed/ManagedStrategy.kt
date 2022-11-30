@@ -234,7 +234,7 @@ abstract class ManagedStrategy(
                 appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace, testCfg.verboseTrace)).toString())
             }.toString()
         }
-        return Trace(traceCollector!!.trace, testCfg.verboseTrace || (this is ModelCheckingStrategy && this.replay))
+        return Trace(traceCollector!!.trace, testCfg.verboseTrace)
     }
 
     /**
@@ -444,7 +444,7 @@ abstract class ManagedStrategy(
     internal fun beforeAtomicMethodCall(iThread: Int, codeLocation: Int) {
         if (!isTestThread(iThread)) return
         // re-use last call trace point
-        newSwitchPoint(iThread, codeLocation, callStackTrace[iThread].lastOrNull()?.call?.let { AtomicCallTracePoint(it) })
+        newSwitchPoint(iThread, codeLocation, callStackTrace[iThread].lastOrNull()?.call)
     }
 
     /**
@@ -707,8 +707,6 @@ abstract class ManagedStrategy(
     private inner class TraceCollector {
         private val _trace = mutableListOf<TracePoint>()
         val trace: List<TracePoint> = _trace
-
-        val nextEventId get() = trace.size
 
         fun newSwitch(iThread: Int, reason: SwitchReason) {
             _trace += SwitchEventTracePoint(iThread, currentActorId[iThread], reason, callStackTrace[iThread].toList())
