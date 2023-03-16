@@ -22,6 +22,7 @@ package org.jetbrains.kotlinx.lincheck
 
 import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
+import java.util.concurrent.atomic.AtomicInteger
 
 // This is org.jetbrains.kotlinx.lincheck.IdeaPluginKt class
 
@@ -42,13 +43,57 @@ fun beforeEvent(eventId: Int, type: String) {
     strategy.enterIgnoredSection(strategy.currentThreadNumber())
     if (needVisualization()) {
         runCatching {
-            visualizeInstance(testObjectPlantUMLVisualisation())
+            val resultArray = arrayListOf<Any>()
+            val (mockTestObject, mockNumbersMap) = createMockObject()
+            val numbersMap = mockNumbersMap
+
+            numbersMap.forEach { (clazz, innerMap) -> // getObjectNumbersMap()
+                innerMap.forEach { (labeledObject, number) ->
+                    resultArray.add(clazz)
+                    resultArray.add(labeledObject)
+                    resultArray.add(number)
+                }
+            }
+
+            registerLabelInPlugin(resultArray.toTypedArray())
+            val testObject =
+                mockTestObject// ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
+            println("numbersMap: $numbersMap")
+            visualizeInstance(testObject)
         }
     }
     strategy.leaveIgnoredSection(strategy.currentThreadNumber())
 }
 
-fun visualizeInstance(s: String) {}
+private fun createMockObject(): Pair<DataHolder, MutableMap<Class<out Any>, MutableMap<Any, Int>>> {
+    val resultMap = mutableMapOf<Class<out Any>, MutableMap<Any, Int>>()
+    val stringsMap = mutableMapOf<Any, Int>()
+    val dataHoldersMap = mutableMapOf<Any, Int>()
+
+    val nestedObject = DataHolder(1, AtomicInteger(1), arrayOf("abc", "rr", "+-"))
+    val rootObject = DataHolder(1, AtomicInteger(1), arrayOf("abc", "!is", "f"), nestedObject)
+
+    stringsMap[nestedObject.data] = 1
+    stringsMap[rootObject.data] = 2
+
+    dataHoldersMap[nestedObject] = 3
+    dataHoldersMap[rootObject] = 4
+
+    resultMap[DataHolder::class.java] = dataHoldersMap
+    resultMap[(emptyArray<String>())::class.java] = stringsMap
+
+    return rootObject to resultMap
+}
+
+data class DataHolder(
+    val id: Int,
+    val atomicId: AtomicInteger,
+    val data: Array<String>,
+    val otherHolder: DataHolder? = null
+)
+
+fun registerLabelInPlugin(array: Array<Any>) {}
+fun visualizeInstance(testObject: Any) {}
 fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
 
 fun onThreadChange() {}
