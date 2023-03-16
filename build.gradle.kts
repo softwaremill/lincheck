@@ -98,9 +98,11 @@ tasks {
         manifest {
             val inceptionYear: String by project
             val lastCopyrightYear: String by project
+            val version: String by project
             attributes("Copyright" to
                 "Copyright (C) 2015 - 2019 Devexperts, LLC\n                                " +
-                "Copyright (C) $inceptionYear - $lastCopyrightYear JetBrains, s.r.o."
+                "Copyright (C) $inceptionYear - $lastCopyrightYear JetBrains, s.r.o.",
+                "Implementation-Version" to version
             )
         }
     }

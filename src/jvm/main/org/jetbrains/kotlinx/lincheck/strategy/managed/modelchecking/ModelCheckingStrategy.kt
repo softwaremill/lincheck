@@ -21,6 +21,7 @@
  */
 package org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking
 
+import org.jetbrains.kotlinx.lincheck.MINIMAL_PLUGIN_VERSION
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.onThreadChange
 import org.jetbrains.kotlinx.lincheck.replay
@@ -119,7 +120,8 @@ internal class ModelCheckingStrategy(
                         }
                         node = node.next
                     }
-                    testFailed(trace.toTypedArray())
+                    val currentVersion = this::class.java.`package`.implementationVersion
+                    testFailed(trace.toTypedArray(), currentVersion, MINIMAL_PLUGIN_VERSION)
 
                     doReplay()
                     while (replay()) {

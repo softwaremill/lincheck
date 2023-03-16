@@ -26,8 +26,10 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // This is org.jetbrains.kotlinx.lincheck.IdeaPluginKt class
 
+const val MINIMAL_PLUGIN_VERSION = "0.0.1"
+
 // Invoked by Lincheck after the minimization is applied. DO NOT FORGET TO TURN OFF THE RUNNER TIMEOUTS.
-fun testFailed(trace: Array<String>) {
+fun testFailed(trace: Array<String>, version: String?, minimalPluginVersion: String) {
 }
 
 fun ideaPluginEnabled(): Boolean {
