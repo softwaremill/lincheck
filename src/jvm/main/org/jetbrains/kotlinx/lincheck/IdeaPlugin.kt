@@ -20,7 +20,9 @@
 
 package org.jetbrains.kotlinx.lincheck
 
+import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
 import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
+import org.jetbrains.kotlinx.lincheck.strategy.managed.getObjectNumbersMap
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -45,9 +47,11 @@ fun beforeEvent(eventId: Int, type: String) {
     strategy.enterIgnoredSection(strategy.currentThreadNumber())
     if (needVisualization()) {
         runCatching {
+            val testObject =
+                ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
             val resultArray = arrayListOf<Any>()
-            val (mockTestObject, mockNumbersMap) = createMockObject()
-            val numbersMap = mockNumbersMap
+            traverseTestObject(testObject)
+            val numbersMap = getObjectNumbersMap()
 
             numbersMap.forEach { (clazz, innerMap) -> // getObjectNumbersMap()
                 innerMap.forEach { (labeledObject, number) ->
@@ -58,8 +62,7 @@ fun beforeEvent(eventId: Int, type: String) {
             }
 
             registerLabelInPlugin(resultArray.toTypedArray())
-            val testObject =
-                mockTestObject// ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
+
             println("numbersMap: $numbersMap")
             visualizeInstance(testObject)
         }

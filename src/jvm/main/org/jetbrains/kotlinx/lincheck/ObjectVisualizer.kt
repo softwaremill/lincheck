@@ -21,10 +21,7 @@
 package org.jetbrains.kotlinx.lincheck
 
 import org.jetbrains.kotlinx.lincheck.TransformationClassLoader.REMAPPED_PACKAGE_CANONICAL_NAME
-import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
-import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
 import org.jetbrains.kotlinx.lincheck.strategy.managed.getObjectNumber
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import java.lang.reflect.Modifier
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -33,143 +30,58 @@ import java.util.concurrent.atomic.*
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.Continuation
 
-//fun main() {
-//    val o = Channel<Int>(2)
-//    o.offer(42)
-//    o.offer(43)
-//    GlobalScope.launch {
-//        o.send(44)
-//    }
-//    Thread.sleep(100)
-
-//    val o = LockFreeSet()
-//    o.add(42)
-//    o.add(43)
-//    o.add(45)
-//    SourceStringReader(visualize(o)).outputImage(FileOutputStream(File("./test.png")))
-//}
-
-fun testObjectPlantUMLVisualisation() =
-    ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance.let {
-        visualize(it)
-    }
-
-fun visualize(obj: Any): String {
-    val sb = StringBuilder()
-    sb.appendLine("@startuml")
-    visualize(obj, sb, Collections.newSetFromMap(IdentityHashMap()))
-    sb.appendLine("@enduml")
-    return sb.toString()
+fun traverseTestObject(obj: Any) {
+    traverseTestObject(obj, Collections.newSetFromMap(IdentityHashMap()))
 }
 
-private fun name(obj: Any): String =
-    obj.javaClass.canonicalName.replace("[]", "_ARRAY_").replace("tran\$f*rmed", "______transformed_____") + "___________________" + getObjectNumber(obj.javaClass, obj)
-
-private fun title(obj: Any): String =
-    obj.javaClass.simpleName + "#" + getObjectNumber(obj.javaClass, obj)
-
-private fun visualize(obj: Any, sb: StringBuilder, visualized: MutableSet<Any>) {
+private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>) {
     if (!visualized.add(obj)) return
-    val name = name(obj)
-    val title = title(obj)
+    getObjectNumber(obj.javaClass, obj)
     var clazz: Class<*>? = obj.javaClass
     if (clazz!!.isArray) {
-        sb.appendLine("map \"$title\" as $name {")
-        if (obj is IntArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is LongArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is ByteArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is CharArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is BooleanArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is FloatArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is DoubleArray) {
-            obj.forEachIndexed { i, o ->
-                sb.appendLine("$i => $o")
-            }
-        } else if (obj is Array<*>) {
-            val toVisualize = ArrayList<Any>()
-            obj.forEachIndexed { i, o ->
-                // TODO support arrays properly
-                if (o == null) {
-                    sb.appendLine("$i => null")
-                } else {
-                    val s = stringRepresentation(o)
-                    if (s != null) {
-                        sb.appendLine("$i => $s")
-                    } else {
-                        sb.appendLine("$i => ${title(o)}")
-                    }
-                }
-            }
-            toVisualize.forEach { visualize(it, sb, visualized) }
+        if (obj is Array<*>) {
+            obj.forEach { element -> element?.let { traverseTestObject(it, visualized) } }
         }
-        sb.appendLine("}")
         return
     }
-    sb.appendLine("object \"$title\" as $name")
     while (clazz != null) {
         clazz.declaredFields.filter { f ->
             !Modifier.isStatic(f.modifiers) &&
-            !f.isEnumConstant &&
-            f.name != "serialVersionUID"
+                    !f.isEnumConstant &&
+                    f.name != "serialVersionUID"
         }.forEach { f ->
             try {
                 f.isAccessible = true
-                val fieldName = f.name
                 var value: Any? = f.get(obj)
 
-                val atomic = value?.javaClass?.canonicalName?.let {
-                    it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicInteger" ||
-                    it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicLong" ||
-                    it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicReference" ||
-                    it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicBoolean"
-                } ?: false
-                if (atomic) {
+                if (isAtomic(value)) {
                     value = value!!.javaClass.getDeclaredMethod("get").invoke(value)
                 }
 
-                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicRef") value = value.javaClass.getDeclaredField("value").apply { isAccessible = true }.get(value)
-                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicInt") value = value.javaClass.getDeclaredField("value").apply { isAccessible = true }.get(value)
-                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicLong") value = value.javaClass.getDeclaredField("value").apply { isAccessible = true }.get(value)
-                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicBoolean") value = value.javaClass.getDeclaredField("_value").apply { isAccessible = true }.get(value)
+                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicRef") value =
+                    value.javaClass.getDeclaredField("value").apply { isAccessible = true }.get(value)
+                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicInt") value =
+                    value.javaClass.getDeclaredField("value").apply { isAccessible = true }.get(value)
+                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicLong") value =
+                    value.javaClass.getDeclaredField("value").apply { isAccessible = true }.get(value)
+                if (value?.javaClass?.canonicalName == "kotlinx.atomicfu.AtomicBoolean") value =
+                    value.javaClass.getDeclaredField("_value").apply { isAccessible = true }.get(value)
 
-                if (value is AtomicIntegerArray) value = (0..value.length()).map { (value as AtomicIntegerArray).get(it) }.toIntArray()
-                if (value is AtomicReferenceArray<*>) value = (0..value.length()).map { (value as AtomicReferenceArray<*>).get(it) }.toTypedArray()
+                if (value is AtomicIntegerArray) value =
+                    (0..value.length()).map { (value as AtomicIntegerArray).get(it) }.toIntArray()
+                if (value is AtomicReferenceArray<*>) value =
+                    (0..value.length()).map { (value as AtomicReferenceArray<*>).get(it) }.toTypedArray()
 
                 if (value?.javaClass?.canonicalName?.startsWith("java.lang.invoke.") ?: false) {
                     // Ignore
-                } else if (value is AtomicReferenceFieldUpdater<*,*> || value is AtomicIntegerFieldUpdater<*> || value is AtomicLongFieldUpdater<*>) {
+                } else if (value is AtomicReferenceFieldUpdater<*, *> || value is AtomicIntegerFieldUpdater<*> || value is AtomicLongFieldUpdater<*>) {
                     // Ignore
                 } else if (value is ReentrantLock) {
-                    sb.appendLine("$name : $fieldName = $value")
+                    // Ignore
                 } else {
-                    val stringValue = stringRepresentation(value)
-                    if (stringValue != null) {
-                        sb.appendLine("$name : $fieldName = $stringValue")
-                    } else {
-                        if (value == null) {
-                            sb.appendLine("$name --> $fieldName = null")
-                        } else {
-                            val valueTitle = name(value)
-                            visualize(value, sb, visualized)
-                            sb.appendLine("$name --> $valueTitle : $fieldName")
+                    if (shouldProcessFurther(value)) {
+                        if (value != null) {
+                            traverseTestObject(value, visualized)
                         }
                     }
                 }
@@ -182,20 +94,27 @@ private fun visualize(obj: Any, sb: StringBuilder, visualized: MutableSet<Any>) 
     }
 }
 
+private fun isAtomic(value: Any?): Boolean {
+    val atomic = value?.javaClass?.canonicalName?.let {
+        it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicInteger" ||
+                it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicLong" ||
+                it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicReference" ||
+                it == REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.concurrent.atomic.AtomicBoolean"
+    } ?: false
+    return atomic
+}
+
 // Try to construct a string representation
-private fun stringRepresentation(obj: Any?): String? {
+private fun shouldProcessFurther(obj: Any?): Boolean {
     if (obj == null || obj.javaClass.isImmutableWithNiceToString)
-        return obj.toString()
-    val id = getObjectNumber(obj.javaClass, obj)
-    if (obj is CharSequence) {
-        return "\"$obj\""
+        return false
+
+    getObjectNumber(obj.javaClass, obj)
+
+    if (obj is CharSequence || obj is Continuation<*>) {
+        return false
     }
-    if (obj is Continuation<*>) {
-        val runner = (ManagedStrategyStateHolder.strategy as? ModelCheckingStrategy)?.runner as? ParallelThreadsRunner
-        val thread = runner?.executor?.threads?.find { it.cont === obj }
-        return if (thread == null) "cont@$id" else "cont@$id[Thread-${thread.iThread + 1}]"
-    }
-    return null
+    return true
 }
 
 @Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER")
