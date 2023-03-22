@@ -85,7 +85,7 @@ abstract class ManagedStrategy(
     // == TRACE CONSTRUCTION FIELDS ==
 
     // Whether an additional information requires for the trace construction should be collected.
-    private var collectTrace = false
+    protected var collectTrace = false
     // Whether state representations (see `@StateRepresentation`) should be collected after interleaving events.
     private val collectStateRepresentation get() = collectTrace && stateRepresentationFunction != null
     // Trace point constructors, where `tracePointConstructors[id]`
@@ -173,7 +173,7 @@ abstract class ManagedStrategy(
         currentActorId.fill(-1)
         loopDetector = LoopDetector(testCfg.hangingDetectionThreshold)
         monitorTracker = MonitorTracker(nThreads)
-        traceCollector = if (collectTrace) TraceCollector() else null
+        traceCollector = if (collectTrace) TraceCollector(this) else null
         suddenInvocationResult = null
         ignoredSectionDepth.fill(0)
         callStackTrace.forEach { it.clear() }
@@ -620,6 +620,7 @@ abstract class ManagedStrategy(
             }
             // code location of the new method call is currently the last
             callStackTrace.add(CallStackTraceElement(tracePoint, methodId))
+            if (this is ModelCheckingStrategy) setBeforeEventId(tracePoint)
         }
     }
 
@@ -704,7 +705,7 @@ abstract class ManagedStrategy(
     /**
      * Logs thread events such as thread switches and passed code locations.
      */
-    private inner class TraceCollector {
+    private inner class TraceCollector(private val strategy: ManagedStrategy) {
         private val _trace = mutableListOf<TracePoint>()
         val trace: List<TracePoint> = _trace
 
@@ -718,7 +719,10 @@ abstract class ManagedStrategy(
 
         fun passCodeLocation(tracePoint: TracePoint?) {
             // tracePoint can be null here if trace is not available, e.g. in case of suspension
-            if (tracePoint != null) _trace += tracePoint
+            if (tracePoint != null) {
+                _trace += tracePoint
+                if (strategy is ModelCheckingStrategy) strategy.setBeforeEventId(tracePoint)
+            }
         }
 
         fun addStateRepresentation(iThread: Int) {

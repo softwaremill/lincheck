@@ -73,18 +73,36 @@ internal class ModelCheckingStrategy(
 
     private var eventIdProvider = EventCounterProvider()
 
-    val shouldInvokeBeforeEvent get() =
+    fun shouldInvokeBeforeEvent() = replay && collectTrace &&
         Thread.currentThread() is FixedActiveThreadsExecutor.TestThread &&
             !inIgnoredSection((Thread.currentThread() as FixedActiveThreadsExecutor.TestThread).iThread)
 
     private class EventCounterProvider {
-        var lastId = 0
-            private set
-        fun nextId() = lastId++
+        var lastVisited = -1
+        private var lastId = -1
+        fun nextId() = ++lastId
+        fun getId() = lastId
     }
 
-    internal fun nextEventId() = eventIdProvider.nextId()
-    internal fun readNextEventId() = eventIdProvider.lastId
+    private fun nextEventId() = eventIdProvider.nextId()
+    internal fun readNextEventId(): Int {
+        if (!shouldInvokeBeforeEvent()) return -1
+        return eventIdProvider.getId().also {
+            if (System.getProperty("lincheck.plugin.disable.pointId.check") == null) {
+                check(eventIdProvider.lastVisited + 1 == it) { "readNextEventId returns unexpected value $it (previous was ${eventIdProvider.lastVisited})" }
+                eventIdProvider.lastVisited = it
+            }
+        }
+    }
+
+    internal fun setBeforeEventId(tracePoint: TracePoint) {
+        if (shouldInvokeBeforeEvent()) {
+            // Method calls and atomic method calls share the same trace points
+            if (tracePoint.beforeEventId == -1) {
+                tracePoint.beforeEventId = nextEventId()
+            }
+        }
+    }
 
     override fun runImpl(): LincheckFailure? {
         while (usedInvocations < maxInvocations) {

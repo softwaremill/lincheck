@@ -40,7 +40,7 @@ data class Trace(val trace: List<TracePoint>, val verboseTrace: Boolean)
  * [callStackTrace] helps to understand whether two events
  * happened in the same, nested, or disjoint methods.
  */
-sealed class TracePoint(val iThread: Int, val actorId: Int, internal val callStackTrace: CallStackTrace, val beforeEventId: Int = -1) {
+sealed class TracePoint(val iThread: Int, val actorId: Int, internal val callStackTrace: CallStackTrace, var beforeEventId: Int = -1) {
     internal abstract fun toStringImpl(verbose: Boolean = true): String
     override fun toString(): String = toStringImpl()
 }
@@ -70,8 +70,7 @@ internal abstract class CodeLocationTracePoint(
     iThread: Int, actorId: Int,
     callStackTrace: CallStackTrace,
     val stackTraceElement: StackTraceElement,
-) : TracePoint(iThread, actorId, callStackTrace,
-    (ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).readNextEventId())
+) : TracePoint(iThread, actorId, callStackTrace)
 
 internal class StateRepresentationTracePoint(
     iThread: Int, actorId: Int,

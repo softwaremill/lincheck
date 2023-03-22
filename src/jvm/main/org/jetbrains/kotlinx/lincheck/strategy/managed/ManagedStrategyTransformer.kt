@@ -363,7 +363,7 @@ internal class ManagedStrategyTransformer(
                     }
                 }
                 ManagedGuaranteeType.TREAT_AS_ATOMIC -> {
-                    invokeBeforeAtomicMethodCall(name)
+                    invokeBeforeAtomicMethodCall()
                     runInIgnoredSection {
                         adapter.visitMethodInsn(opcode, owner, name, desc, itf)
                     }
@@ -383,12 +383,11 @@ internal class ManagedStrategyTransformer(
             return null
         }
 
-        private fun invokeBeforeAtomicMethodCall(name: String) {
+        private fun invokeBeforeAtomicMethodCall() {
             loadStrategy()
             loadCurrentThreadNumber()
             adapter.push(codeLocationIdProvider.lastId) // re-use previous code location
             adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_ATOMIC_METHOD_CALL_METHOD)
-            invokeBeforeEvent("atomic $name")
         }
     }
 
@@ -466,6 +465,7 @@ internal class ManagedStrategyTransformer(
             invokeBeforeMethodCall(methodName, tracePointLocal)
             captureParameters(opcode, owner, methodName, desc, tracePointLocal)
             captureOwnerName(opcode, owner, methodName, desc, tracePointLocal)
+            invokeBeforeEvent("method call $methodName")
         }
 
         // STACK: returned value (unless void)
@@ -560,7 +560,6 @@ internal class ManagedStrategyTransformer(
                 MethodCallTracePoint(iThread, actorId, callStackTrace, methodName, ste)
             }
             adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_METHOD_CALL_METHOD)
-            invokeBeforeEvent("method call $methodName")
         }
 
         private fun invokeAfterMethodCall(tracePointLocal: Int) {
@@ -1214,16 +1213,12 @@ internal class ManagedStrategyTransformer(
             }
 
         protected fun invokeBeforeEvent(type: String) {
-            val inReplayEnd: Label = adapter.newLabel()
-            loadStrategy()
-            adapter.checkCast(MODEL_CHECKING_STRATEGY_TYPE)
-            adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, GET_REPLAY_PROPERTY)
-            adapter.ifZCmp(GeneratorAdapter.EQ, inReplayEnd)
+            val skipLabel: Label = adapter.newLabel()
 
             loadStrategy()
             adapter.checkCast(MODEL_CHECKING_STRATEGY_TYPE)
-            adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, GET_PARALLEL_STARTED_PROPERTY)
-            adapter.ifZCmp(GeneratorAdapter.EQ, inReplayEnd)
+            adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, SHOULD_INVOKE_BEFORE_EVENT_METHOD)
+            adapter.ifZCmp(GeneratorAdapter.EQ, skipLabel)
 
             loadStrategy()
             adapter.checkCast(MODEL_CHECKING_STRATEGY_TYPE)
@@ -1231,7 +1226,7 @@ internal class ManagedStrategyTransformer(
             adapter.push(type)
             adapter.invokeStatic(IDEA_PLUGIN_TYPE, BEFORE_EVENT_METHOD)
 
-            adapter.visitLabel(inReplayEnd)
+            adapter.visitLabel(skipLabel)
         }
 
         /**
@@ -1380,9 +1375,8 @@ private val INITIALIZE_THROWN_EXCEPTION_METHOD = Method.getMethod(MethodCallTrac
 private val INITIALIZE_PARAMETERS_METHOD = Method.getMethod(MethodCallTracePoint::initializeParameters.javaMethod)
 private val INITIALIZE_OWNER_NAME_METHOD = Method.getMethod(MethodCallTracePoint::initializeOwnerName.javaMethod)
 private val NEXT_INT_METHOD = Method("nextInt", Type.INT_TYPE, emptyArray<Type>())
-private val GET_REPLAY_PROPERTY = Method.getMethod(ModelCheckingStrategy::replay.javaGetter)
-private val GET_PARALLEL_STARTED_PROPERTY = Method.getMethod(ModelCheckingStrategy::shouldInvokeBeforeEvent.javaGetter)
-private val GET_NEXT_EVENT_ID_METHOD = Method.getMethod(ModelCheckingStrategy::nextEventId.javaMethod)
+private val SHOULD_INVOKE_BEFORE_EVENT_METHOD = Method.getMethod(ModelCheckingStrategy::shouldInvokeBeforeEvent.javaMethod)
+private val GET_NEXT_EVENT_ID_METHOD = Method.getMethod(ModelCheckingStrategy::readNextEventId.javaMethod)
 
 private val WRITE_KEYWORDS = listOf("set", "put", "swap", "exchange")
 
