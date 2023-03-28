@@ -22,9 +22,7 @@ package org.jetbrains.kotlinx.lincheck
 
 import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
 import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
-import org.jetbrains.kotlinx.lincheck.strategy.managed.getObjectNumbersMap
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
-import java.util.concurrent.atomic.AtomicInteger
 
 // This is org.jetbrains.kotlinx.lincheck.IdeaPluginKt class
 
@@ -49,49 +47,47 @@ fun beforeEvent(eventId: Int, type: String) {
         runCatching {
             val testObject =
                 ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
-            val resultArray = arrayListOf<Any>()
 
-            val numbersMap = traverseTestObject(testObject)
+            val resultArray = createObjectToNumberMap(testObject)
+            val threadsMap = createContinuationToThreadMap()
 
-            numbersMap.forEach { (labeledObject, label) -> // getObjectNumbersMap()
-                resultArray.add(labeledObject)
-                resultArray.add(label)
-            }
-
-            visualizeInstance(testObject, resultArray.toTypedArray())
+            visualizeInstance(testObject, resultArray, threadsMap)
         }
     }
     strategy.leaveIgnoredSection(strategy.currentThreadNumber())
 }
 
-private fun createMockObject(): Pair<DataHolder, MutableMap<Class<out Any>, MutableMap<Any, Int>>> {
-    val resultMap = mutableMapOf<Class<out Any>, MutableMap<Any, Int>>()
-    val stringsMap = mutableMapOf<Any, Int>()
-    val dataHoldersMap = mutableMapOf<Any, Int>()
+private fun createObjectToNumberMap(testObject: Any): Array<Any> {
+    val resultArray = arrayListOf<Any>()
 
-    val nestedObject = DataHolder(1, AtomicInteger(1), arrayOf("abc", "rr", "+-"))
-    val rootObject = DataHolder(1, AtomicInteger(1), arrayOf("abc", "!is", "f"), nestedObject)
-
-    stringsMap[nestedObject.data] = 1
-    stringsMap[rootObject.data] = 2
-
-    dataHoldersMap[nestedObject] = 3
-    dataHoldersMap[rootObject] = 4
-
-    resultMap[DataHolder::class.java] = dataHoldersMap
-    resultMap[(emptyArray<String>())::class.java] = stringsMap
-
-    return rootObject to resultMap
+    val numbersMap = traverseTestObject(testObject)
+    numbersMap.forEach { (labeledObject, label) -> // getObjectNumbersMap()
+        resultArray.add(labeledObject)
+        resultArray.add(label)
+    }
+    return resultArray.toTypedArray()
 }
 
-data class DataHolder(
-    val id: Int,
-    val atomicId: AtomicInteger,
-    val data: Array<String>,
-    val otherHolder: DataHolder? = null
-)
+private fun createContinuationToThreadMap(): Array<Any?> {
+    val runner =
+        (ManagedStrategyStateHolder.strategy as? ModelCheckingStrategy)?.runner as? ParallelThreadsRunner
+    val threads = runner?.executor?.threads
 
-fun visualizeInstance(testObject: Any, numbersArrayMap: Array<Any>) {}
+    val threadsMap: Array<Any?> = if (threads == null) emptyArray() else {
+        val array = arrayOfNulls<Any?>(threads.size * 2)
+        for (i in threads.indices) {
+            val thread = threads[i]
+            array[i * 2] = thread.cont
+            array[i * 2 + 1] = thread
+        }
+        array
+    }
+
+    return threadsMap
+}
+
+
+fun visualizeInstance(testObject: Any, numbersArrayMap: Array<Any>, threadsArrayMap: Array<Any?>) {}
 fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
 
 fun onThreadChange() {}

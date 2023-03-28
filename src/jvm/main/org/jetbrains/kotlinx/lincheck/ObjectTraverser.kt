@@ -21,10 +21,7 @@
 package org.jetbrains.kotlinx.lincheck
 
 import org.jetbrains.kotlinx.lincheck.TransformationClassLoader.REMAPPED_PACKAGE_CANONICAL_NAME
-import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
-import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
 import org.jetbrains.kotlinx.lincheck.strategy.managed.getObjectNumber
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import java.lang.reflect.Modifier
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -33,17 +30,17 @@ import java.util.concurrent.atomic.*
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.Continuation
 
-fun traverseTestObject(obj: Any): Map<Any, String> {
-    val result = hashMapOf<Any, String>()
+fun traverseTestObject(obj: Any): Map<Any, Int> {
+    val result = hashMapOf<Any, Int>()
     traverseTestObject(obj, Collections.newSetFromMap(IdentityHashMap()), result)
 
     return result
 }
 
-private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>, result: MutableMap<Any, String>) {
+private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>, result: MutableMap<Any, Int>) {
     if (!visualized.add(obj)) return
     val objectNumber = getObjectNumber(obj.javaClass, obj)
-    result[obj] = objectNumber.toString()
+    result[obj] = objectNumber
 
     var clazz: Class<*>? = obj.javaClass
     if (clazz!!.isArray) {
@@ -113,7 +110,7 @@ private fun isAtomic(value: Any?): Boolean {
 }
 
 // Try to construct a string representation
-private fun shouldProcessFurther(obj: Any?, result: MutableMap<Any, String>): Boolean {
+private fun shouldProcessFurther(obj: Any?, result: MutableMap<Any, Int>): Boolean {
     if (obj == null || obj.javaClass.isImmutableWithNiceToString)
         return false
 //    getObjectNumber(obj.javaClass, obj)
@@ -122,12 +119,7 @@ private fun shouldProcessFurther(obj: Any?, result: MutableMap<Any, String>): Bo
         return false
     }
     if (obj is Continuation<*>) {
-        val id = getObjectNumber(obj.javaClass, obj)
-        val runner = (ManagedStrategyStateHolder.strategy as? ModelCheckingStrategy)?.runner as? ParallelThreadsRunner
-        val thread = runner?.executor?.threads?.find { it.cont === obj }
-        val label = if (thread == null) "cont@$id" else "cont@$id[Thread-${thread.iThread + 1}]"
-
-        result[obj] = label
+        result[obj] = getObjectNumber(obj.javaClass, obj)
         return false
     }
     return true
