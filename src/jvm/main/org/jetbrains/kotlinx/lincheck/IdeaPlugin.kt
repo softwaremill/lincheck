@@ -61,10 +61,7 @@ fun beforeEvent(eventId: Int, type: String) {
                 }
             }
 
-            registerLabelInPlugin(resultArray.toTypedArray())
-
-            println("numbersMap: $numbersMap")
-            visualizeInstance(testObject)
+            visualizeInstance(testObject, resultArray.toTypedArray())
         }
     }
     strategy.leaveIgnoredSection(strategy.currentThreadNumber())
@@ -96,9 +93,7 @@ data class DataHolder(
     val data: Array<String>,
     val otherHolder: DataHolder? = null
 )
-
-fun registerLabelInPlugin(array: Array<Any>) {}
-fun visualizeInstance(testObject: Any) {}
+fun visualizeInstance(testObject: Any, numbersArrayMap: Array<Any>) {}
 fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
 
 fun onThreadChange() {}
