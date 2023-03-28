@@ -50,15 +50,12 @@ fun beforeEvent(eventId: Int, type: String) {
             val testObject =
                 ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
             val resultArray = arrayListOf<Any>()
-            traverseTestObject(testObject)
-            val numbersMap = getObjectNumbersMap()
 
-            numbersMap.forEach { (clazz, innerMap) -> // getObjectNumbersMap()
-                innerMap.forEach { (labeledObject, number) ->
-                    resultArray.add(clazz)
-                    resultArray.add(labeledObject)
-                    resultArray.add(number)
-                }
+            val numbersMap = traverseTestObject(testObject)
+
+            numbersMap.forEach { (labeledObject, label) -> // getObjectNumbersMap()
+                resultArray.add(labeledObject)
+                resultArray.add(label)
             }
 
             visualizeInstance(testObject, resultArray.toTypedArray())
@@ -93,6 +90,7 @@ data class DataHolder(
     val data: Array<String>,
     val otherHolder: DataHolder? = null
 )
+
 fun visualizeInstance(testObject: Any, numbersArrayMap: Array<Any>) {}
 fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
 

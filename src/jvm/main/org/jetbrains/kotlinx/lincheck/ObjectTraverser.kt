@@ -21,7 +21,10 @@
 package org.jetbrains.kotlinx.lincheck
 
 import org.jetbrains.kotlinx.lincheck.TransformationClassLoader.REMAPPED_PACKAGE_CANONICAL_NAME
+import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
+import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
 import org.jetbrains.kotlinx.lincheck.strategy.managed.getObjectNumber
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import java.lang.reflect.Modifier
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -30,17 +33,22 @@ import java.util.concurrent.atomic.*
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.Continuation
 
-fun traverseTestObject(obj: Any) {
-    traverseTestObject(obj, Collections.newSetFromMap(IdentityHashMap()))
+fun traverseTestObject(obj: Any): Map<Any, String> {
+    val result = hashMapOf<Any, String>()
+    traverseTestObject(obj, Collections.newSetFromMap(IdentityHashMap()), result)
+
+    return result
 }
 
-private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>) {
+private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>, result: MutableMap<Any, String>) {
     if (!visualized.add(obj)) return
-    getObjectNumber(obj.javaClass, obj)
+    val objectNumber = getObjectNumber(obj.javaClass, obj)
+    result[obj] = objectNumber.toString()
+
     var clazz: Class<*>? = obj.javaClass
     if (clazz!!.isArray) {
         if (obj is Array<*>) {
-            obj.forEach { element -> element?.let { traverseTestObject(it, visualized) } }
+            obj.forEach { element -> element?.let { traverseTestObject(it, visualized, result) } }
         }
         return
     }
@@ -79,9 +87,9 @@ private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>) {
                 } else if (value is ReentrantLock) {
                     // Ignore
                 } else {
-                    if (shouldProcessFurther(value)) {
+                    if (shouldProcessFurther(value, result)) {
                         if (value != null) {
-                            traverseTestObject(value, visualized)
+                            traverseTestObject(value, visualized, result)
                         }
                     }
                 }
@@ -105,13 +113,21 @@ private fun isAtomic(value: Any?): Boolean {
 }
 
 // Try to construct a string representation
-private fun shouldProcessFurther(obj: Any?): Boolean {
+private fun shouldProcessFurther(obj: Any?, result: MutableMap<Any, String>): Boolean {
     if (obj == null || obj.javaClass.isImmutableWithNiceToString)
         return false
+//    getObjectNumber(obj.javaClass, obj)
 
-    getObjectNumber(obj.javaClass, obj)
+    if (obj is CharSequence) {
+        return false
+    }
+    if (obj is Continuation<*>) {
+        val id = getObjectNumber(obj.javaClass, obj)
+        val runner = (ManagedStrategyStateHolder.strategy as? ModelCheckingStrategy)?.runner as? ParallelThreadsRunner
+        val thread = runner?.executor?.threads?.find { it.cont === obj }
+        val label = if (thread == null) "cont@$id" else "cont@$id[Thread-${thread.iThread + 1}]"
 
-    if (obj is CharSequence || obj is Continuation<*>) {
+        result[obj] = label
         return false
     }
     return true
