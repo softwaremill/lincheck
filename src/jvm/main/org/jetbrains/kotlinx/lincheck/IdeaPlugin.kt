@@ -20,6 +20,7 @@
 
 package org.jetbrains.kotlinx.lincheck
 
+import org.jetbrains.kotlinx.lincheck.runner.FixedActiveThreadsExecutor
 import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
 import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
@@ -48,10 +49,12 @@ fun beforeEvent(eventId: Int, type: String) {
             val testObject =
                 ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
 
-            val resultArray = createObjectToNumberMap(testObject)
-            val threadsMap = createContinuationToThreadMap()
+            val labelsMap = createObjectToNumberMap(testObject)
+            val threads = executorThreads()
+            val continuationToLincheckThreadIdMap = createContinuationToThreadIdMap(threads)
+            val threadToLincheckThreadIdMap = createThreadToLincheckThreadIdMap(threads)
 
-            visualizeInstance(testObject, resultArray, threadsMap)
+            visualizeInstance(testObject, labelsMap, continuationToLincheckThreadIdMap, threadToLincheckThreadIdMap)
         }
     }
     strategy.leaveIgnoredSection(strategy.currentThreadNumber())
@@ -68,26 +71,45 @@ private fun createObjectToNumberMap(testObject: Any): Array<Any> {
     return resultArray.toTypedArray()
 }
 
-private fun createContinuationToThreadMap(): Array<Any?> {
+private fun executorThreads(): List<FixedActiveThreadsExecutor.TestThread>? {
     val runner =
         (ManagedStrategyStateHolder.strategy as? ModelCheckingStrategy)?.runner as? ParallelThreadsRunner
-    val threads = runner?.executor?.threads
+    return runner?.executor?.threads
+}
 
-    val threadsMap: Array<Any?> = if (threads == null) emptyArray() else {
-        val array = arrayOfNulls<Any?>(threads.size * 2)
-        for (i in threads.indices) {
-            val thread = threads[i]
-            array[i * 2] = thread.cont
-            array[i * 2 + 1] = thread
-        }
-        array
+private fun createThreadToLincheckThreadIdMap(threads: List<FixedActiveThreadsExecutor.TestThread>?): Array<Any> {
+    if (threads == null) return emptyArray()
+
+    val array = arrayListOf<Any>()
+    for (i in threads.indices) {
+        val thread = threads[i]
+        array.add(thread)
+        array.add(thread.iThread)
     }
 
-    return threadsMap
+    return array.toTypedArray()
+}
+
+private fun createContinuationToThreadIdMap(threads: List<FixedActiveThreadsExecutor.TestThread>?): Array<Any> {
+    if (threads == null) return emptyArray()
+
+    val array = arrayListOf<Any>()
+    for (i in threads.indices) {
+        val thread = threads[i]
+        array.add(thread.cont ?: continue)
+        array.add(thread.iThread)
+    }
+
+    return array.toTypedArray()
 }
 
 
-fun visualizeInstance(testObject: Any, numbersArrayMap: Array<Any>, threadsArrayMap: Array<Any?>) {}
+fun visualizeInstance(
+    testObject: Any,
+    numbersArrayMap: Array<Any>,
+    threadsArrayMap: Array<Any>,
+    threadToLincheckThreadIdMap: Array<Any>
+) {}
 fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
 
 fun onThreadChange() {}
