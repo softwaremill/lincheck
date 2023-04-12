@@ -273,8 +273,8 @@ internal class ManagedStrategyTransformer(
         private fun beforeSharedVariableWrite(fieldName: String? = null, desc: String) {
             val tracePointLocal = newTracePointLocal()
             invokeBeforeSharedVariableWrite(fieldName, tracePointLocal)
-            captureWrittenValue(desc, tracePointLocal)
             invokeBeforeEvent("SharedVariableWrite")
+            captureWrittenValue(desc, tracePointLocal)
         }
 
         // STACK: value to be written
@@ -463,9 +463,9 @@ internal class ManagedStrategyTransformer(
         // STACK: param_1 param_2 ... param_n
         private fun beforeMethodCall(opcode: Int, owner: String, methodName: String, desc: String, tracePointLocal: Int) {
             invokeBeforeMethodCall(methodName, tracePointLocal)
+            invokeBeforeEvent("method call $methodName")
             captureParameters(opcode, owner, methodName, desc, tracePointLocal)
             captureOwnerName(opcode, owner, methodName, desc, tracePointLocal)
-            invokeBeforeEvent("method call $methodName")
         }
 
         // STACK: returned value (unless void)

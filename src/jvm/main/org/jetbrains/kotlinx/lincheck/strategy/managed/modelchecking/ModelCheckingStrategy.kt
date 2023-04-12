@@ -84,7 +84,11 @@ internal class ModelCheckingStrategy(
         fun getId() = lastId
     }
 
-    private fun nextEventId() = eventIdProvider.nextId()
+    private fun nextEventId() = eventIdProvider.nextId().also {
+        if (System.getProperty("lincheck.plugin.disable.pointId.check") == null) {
+            check(eventIdProvider.lastVisited + 1 == it) { "nextEventId is called without readNextEventId value $it (previous read ${eventIdProvider.lastVisited})" }
+        }
+    }
     internal fun readNextEventId(): Int {
         if (!shouldInvokeBeforeEvent()) return -1
         return eventIdProvider.getId().also {
@@ -160,7 +164,9 @@ internal class ModelCheckingStrategy(
     }
 
     override fun onNewSwitch(iThread: Int, mustSwitch: Boolean) {
-        onThreadChange()
+        if (replay && collectTrace) {
+            onThreadChange()
+        }
         if (mustSwitch) {
             // Create new execution position if this is a forced switch.
             // All other execution positions are covered by `shouldSwitch` method,
