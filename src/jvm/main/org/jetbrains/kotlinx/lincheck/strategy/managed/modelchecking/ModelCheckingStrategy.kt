@@ -21,14 +21,11 @@
  */
 package org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking
 
-import org.jetbrains.kotlinx.lincheck.MINIMAL_PLUGIN_VERSION
+import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.execution.*
-import org.jetbrains.kotlinx.lincheck.onThreadChange
-import org.jetbrains.kotlinx.lincheck.replay
 import org.jetbrains.kotlinx.lincheck.runner.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
 import org.jetbrains.kotlinx.lincheck.strategy.managed.*
-import org.jetbrains.kotlinx.lincheck.testFailed
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import java.lang.reflect.*
 import kotlin.random.*
@@ -85,14 +82,14 @@ internal class ModelCheckingStrategy(
     }
 
     private fun nextEventId() = eventIdProvider.nextId().also {
-        if (System.getProperty("lincheck.plugin.disable.pointId.check") == null) {
+        if (isDebuggerTestMode()) {
             check(eventIdProvider.lastVisited + 1 == it) { "nextEventId is called without readNextEventId value $it (previous read ${eventIdProvider.lastVisited})" }
         }
     }
     internal fun readNextEventId(): Int {
         if (!shouldInvokeBeforeEvent()) return -1
         return eventIdProvider.getId().also {
-            if (System.getProperty("lincheck.plugin.disable.pointId.check") == null) {
+            if (isDebuggerTestMode()) {
                 check(eventIdProvider.lastVisited + 1 == it) { "readNextEventId returns unexpected value $it (previous was ${eventIdProvider.lastVisited})" }
                 eventIdProvider.lastVisited = it
             }
