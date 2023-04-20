@@ -56,10 +56,9 @@ Lincheck features step-by-step:
 1. [Write your first test with Lincheck](introduction.md)
 2. [Choose your testing strategy](testing-strategies.md)
 3. [Configure operation arguments](operation-arguments.md)
-4. [Use modular testing in model checking](modular-testing.md) 
-5. [Consider popular algorithm constraints](constraints.md)
-6. [Check the algorithm for non-blocking progress guarantees](progress-guarantees.md)
-7. [Define sequential specification of the algorithm](sequential-specification.md)
+4. [Consider popular algorithm constraints](constraints.md)
+5. [Check the algorithm for non-blocking progress guarantees](progress-guarantees.md)
+6. [Define sequential specification of the algorithm](sequential-specification.md)
 
 ## Additional references
 
@@ -69,6 +68,6 @@ Lincheck features step-by-step:
   Hydra 2021, EN
 * [Lincheck. Testing concurrent data structures in Java](https://www.youtube.com/watch?v=YAb7YoEd6mM), Heisenbug 2019,
   RU
-* [Testing concurrent algorithms with Lincheck](https://nkoval.com/talks/#lincheck-joker-2019), Joker 2019, RU
+* [Testing concurrent algorithms with Lincheck](https://www.youtube.com/watch?v=9cB36asOjPo), Joker 2019, RU
 * [Lincheck: testing concurrent data structures on Java](https://www.youtube.com/watch?v=hwbpUEGHvvY), Hydra 2019, RU
-* [Lock-free algorithms testing](https://www.youtube.com/watch?v=_0_HOnTSS0E&t=1s), Joker 2017, RU
+* [Lock-free algorithms testing](https://www.youtube.com/watch?v=_0_HOnTSS0E), Joker 2017, RU

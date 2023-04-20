@@ -107,7 +107,8 @@ abstract class ManagedStrategy(
         runner = createRunner()
         // The managed state should be initialized before еру test class transformation.
         try {
-            initializeManagedState()
+            // Initialize ManagedStrategyStateHolder - it can be used during test class construction.
+            ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
             runner.initialize()
         } catch (t: Throwable) {
             runner.close()
@@ -119,10 +120,6 @@ abstract class ManagedStrategy(
         ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction,
             if (this is ModelCheckingStrategy && this.replay) Long.MAX_VALUE / 2 else testCfg.timeoutMs,
             UseClocks.ALWAYS)
-
-    private fun initializeManagedState() {
-        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
-    }
 
     override fun createTransformer(cv: ClassVisitor): ClassVisitor = ManagedStrategyTransformer(
         cv = cv,
@@ -178,7 +175,7 @@ abstract class ManagedStrategy(
         ignoredSectionDepth.fill(0)
         callStackTrace.forEach { it.clear() }
         suspendedFunctionsStack.forEach { it.clear() }
-        ManagedStrategyStateHolder.resetState(runner.classLoader, testClass)
+        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
     }
 
     // == BASIC STRATEGY METHODS ==
@@ -219,7 +216,7 @@ abstract class ManagedStrategy(
         // `TransformationClassLoader` with a transformer that inserts the trace collection logic.
         runner.close()
         runner = createRunner()
-        initializeManagedState()
+        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
         runner.initialize()
         (this as ModelCheckingStrategy).currentInterleaving = this.currentInterleaving.copy()
         val loggedResults = runInvocation()
@@ -231,10 +228,10 @@ abstract class ManagedStrategy(
                 appendln("== Reporting the first execution without execution trace ==")
                 appendln(failingResult.toLincheckFailure(scenario, null))
                 appendln("== Reporting the second execution ==")
-                appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace, testCfg.verboseTrace)).toString())
+                appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace)).toString())
             }.toString()
         }
-        return Trace(traceCollector!!.trace, testCfg.verboseTrace)
+        return Trace(traceCollector!!.trace)
     }
 
     /**

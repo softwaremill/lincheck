@@ -80,7 +80,6 @@ class TraceReportingTest {
             .actorsAfter(0)
             .actorsBefore(0)
             .actorsPerThread(1)
-            .requireStateEquivalenceImplCheck(false)
             .checkImpl(this::class.java)
         checkNotNull(failure) { "test should fail" }
         val log = failure.toString()

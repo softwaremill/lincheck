@@ -28,7 +28,6 @@ import org.jetbrains.kotlinx.lincheck.CancellableContinuationHolder.storedLastCa
 import org.jetbrains.kotlinx.lincheck.verifier.LTS.*
 import org.jetbrains.kotlinx.lincheck.verifier.OperationType.*
 import java.util.*
-import kotlin.collections.HashMap
 import kotlin.coroutines.*
 import kotlin.math.*
 
@@ -281,12 +280,6 @@ class LTS(sequentialSpecification: Class<*>) {
 
     private fun createInitialStateInstance() = sequentialSpecification.newInstance()
 
-    fun checkStateEquivalenceImplementation(): Boolean {
-        val i1 = createInitialStateInstance()
-        val i2 = createInitialStateInstance()
-        return i1.hashCode() == i2.hashCode() && i1 == i2
-    }
-
     private fun StateInfo.computeRemappingFunction(old: StateInfo): RemappingFunction? {
         if (maxTicket == NO_TICKET) return null
         val rf = IntArray(maxTicket + 1) { NO_TICKET }
@@ -370,8 +363,8 @@ private class StateInfo(
 
     val maxTicket: Int
         get() = max(
-            suspendedOperations.maxBy { it.ticket }?.ticket ?: NO_TICKET,
-            resumedOperations.maxBy { it.resumedActorTicket }?.resumedActorTicket ?: NO_TICKET
+            suspendedOperations.maxByOrNull { it.ticket }?.ticket ?: NO_TICKET,
+            resumedOperations.maxByOrNull { it.resumedActorTicket }?.resumedActorTicket ?: NO_TICKET
         )
 }
 

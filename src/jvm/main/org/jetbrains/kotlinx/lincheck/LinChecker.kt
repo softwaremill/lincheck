@@ -64,23 +64,30 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
     }
 
     private fun CTestConfiguration.checkImpl(): LincheckFailure? {
-        val exGen = createExecutionGenerator()
-        val verifier = createVerifier(checkStateEquivalence = true)
+        val exGen = createExecutionGenerator(testStructure.randomProvider)
         for (i in customScenarios.indices) {
+            val verifier = createVerifier()
             val scenario = customScenarios[i]
             scenario.validate()
             reporter.logIteration(i + 1, customScenarios.size, scenario)
             val failure = scenario.run(this, verifier)
             if (failure != null) return failure
         }
+        var verifier = createVerifier()
         repeat(iterations) { i ->
+            // For performance reasons, verifier re-uses LTS from previous iterations.
+            // This behaviour is similar to a memory leak and can potentially cause OutOfMemoryError.
+            // This is why we periodically create a new verifier to still have increased performance
+            // from re-using LTS and limit the size of potential memory leak.
+            // https://github.com/Kotlin/kotlinx-lincheck/issues/124
+            if ((i + 1) % VERIFIER_REFRESH_CYCLE == 0)
+                verifier = createVerifier()
             val scenario = exGen.nextExecution()
             scenario.validate()
             reporter.logIteration(i + 1 + customScenarios.size, iterations, scenario)
             val failure = scenario.run(this, verifier)
             if (failure != null) {
-                val minimizedFailedIteration = if (!minimizeFailedScenario) failure
-                                               else failure.minimize(this)
+                val minimizedFailedIteration = if (!minimizeFailedScenario) failure else failure.minimize(this)
                 if (ideaPluginEnabled()) {
                     reporter.logFailedIterationWarn(minimizedFailedIteration)
                     minimizedFailedIteration.scenario.run(this, verifier, replay = true)
@@ -136,7 +143,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
             newScenario.parallelExecution.removeAt(threadId - 1)
         }
         return if (newScenario.isValid) {
-            val verifier = testCfg.createVerifier(checkStateEquivalence = false)
+            val verifier = testCfg.createVerifier()
             newScenario.run(testCfg, verifier)
         } else null
     }
@@ -184,25 +191,15 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
         parallelExecution.map { it.size }.sum() == 0
 
 
-    private fun CTestConfiguration.createVerifier(checkStateEquivalence: Boolean) =
-        verifierClass.getConstructor(Class::class.java).newInstance(sequentialSpecification).also {
-            if (!checkStateEquivalence) return@also
-            val stateEquivalenceCorrect = it.checkStateEquivalenceImplementation()
-            if (!stateEquivalenceCorrect) {
-                if (requireStateEquivalenceImplCheck) {
-                    val errorMessage = StringBuilder().appendStateEquivalenceViolationMessage(sequentialSpecification).toString()
-                    error(errorMessage)
-                } else {
-                    reporter.logStateEquivalenceViolation(sequentialSpecification)
-                }
-            }
-        }
+    private fun CTestConfiguration.createVerifier() =
+        verifierClass.getConstructor(Class::class.java).newInstance(sequentialSpecification)
 
-    private fun CTestConfiguration.createExecutionGenerator() =
+    private fun CTestConfiguration.createExecutionGenerator(randomProvider: RandomProvider) =
         generatorClass.getConstructor(
             CTestConfiguration::class.java,
-            CTestStructure::class.java
-        ).newInstance(this, testStructure)
+            CTestStructure::class.java,
+            RandomProvider::class.java
+        ).newInstance(this, testStructure, randomProvider)
 
     // This companion object is used for backwards compatibility.
     companion object {
@@ -217,6 +214,8 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
         fun check(testClass: Class<*>, options: Options<*, *>? = null) {
             LinChecker(testClass, options).check()
         }
+
+        private const val VERIFIER_REFRESH_CYCLE = 100
     }
 }
 

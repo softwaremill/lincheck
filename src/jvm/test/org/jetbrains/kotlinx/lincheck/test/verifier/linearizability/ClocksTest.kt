@@ -56,14 +56,15 @@ class ClocksTest : AbstractLincheckTest(IncorrectResultsFailure::class) {
         executionGenerator(ClocksTestScenarioGenerator::class.java)
         iterations(1)
         sequentialSpecification(ClocksTestSequential::class.java)
-        requireStateEquivalenceImplCheck(false)
         minimizeFailedScenario(false)
     }
 }
 
-class ClocksTestScenarioGenerator(testCfg: CTestConfiguration, testStructure: CTestStructure)
-    : ExecutionGenerator(testCfg, testStructure)
-{
+class ClocksTestScenarioGenerator(
+    testCfg: CTestConfiguration,
+    testStructure: CTestStructure,
+    randomProvider: RandomProvider
+) : ExecutionGenerator(testCfg, testStructure) {
     override fun nextExecution() = ExecutionScenario(
         emptyList(),
         listOf(
