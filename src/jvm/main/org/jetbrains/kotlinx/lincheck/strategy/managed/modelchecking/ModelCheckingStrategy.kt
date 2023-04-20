@@ -135,7 +135,7 @@ internal class ModelCheckingStrategy(
                             }
                         }
                         if (representation != "") {
-                            trace.add("${node.iThread};${node.callDepth};${node.shouldBeExpanded};${beforeEventId};${representation}")
+                            trace.add("${node.iThread};${node.callDepth};${node.shouldBeExpanded(false)};${beforeEventId};${representation}")
                         }
                         node = node.next
                     }
