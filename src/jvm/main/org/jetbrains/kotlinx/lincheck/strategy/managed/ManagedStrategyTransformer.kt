@@ -714,14 +714,13 @@ internal class ManagedStrategyTransformer(
                 MONITORENTER -> {
                     val opEnd = newLabel()
                     val skipMonitorEnter: Label = newLabel()
-                    dup()
                     invokeBeforeLockAcquire()
                     // check whether the lock should be really acquired
                     ifZCmp(GeneratorAdapter.EQ, skipMonitorEnter)
                     monitorEnter()
                     goTo(opEnd)
                     visitLabel(skipMonitorEnter)
-                    pop()
+                    invokeInternalLockAcquire()
                     visitLabel(opEnd)
                 }
                 MONITOREXIT -> {
@@ -741,26 +740,34 @@ internal class ManagedStrategyTransformer(
             }
         }
 
-        // STACK: monitor
         private fun invokeBeforeLockAcquire() {
-            invokeBeforeLockAcquireOrRelease(BEFORE_LOCK_ACQUIRE_METHOD, ::MonitorEnterTracePoint, MONITORENTER_TRACE_POINT_TYPE)
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, MONITORENTER_TRACE_POINT_TYPE, ::MonitorEnterTracePoint)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_LOCK_ACQUIRE_METHOD)
+            invokeBeforeEvent("lock")
         }
 
         // STACK: monitor
-        private fun invokeBeforeLockRelease() {
-            invokeBeforeLockAcquireOrRelease(BEFORE_LOCK_RELEASE_METHOD, ::MonitorExitTracePoint, MONITOREXIT_TRACE_POINT_TYPE)
-        }
-
-        // STACK: monitor
-        private fun invokeBeforeLockAcquireOrRelease(method: Method, codeLocationConstructor: CodeLocationTracePointConstructor, tracePointType: Type) {
+        private fun invokeInternalLockAcquire() {
             val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
             adapter.storeLocal(monitorLocal)
             loadStrategy()
             loadCurrentThreadNumber()
-            loadNewCodeLocationAndTracePoint(null, tracePointType, codeLocationConstructor)
             adapter.loadLocal(monitorLocal)
-            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, method)
-            invokeBeforeEvent("lock/unlock")
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, INTERNAL_LOCK_ACQUIRE_METHOD)
+        }
+
+        // STACK: monitor
+        private fun invokeBeforeLockRelease() {
+            val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
+            adapter.storeLocal(monitorLocal)
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, MONITOREXIT_TRACE_POINT_TYPE, ::MonitorExitTracePoint)
+            adapter.loadLocal(monitorLocal)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_LOCK_RELEASE_METHOD)
+            invokeBeforeEvent("unlock")
         }
     }
 
@@ -842,11 +849,11 @@ internal class ManagedStrategyTransformer(
                         storeLocal(firstArgument)
                     }
                 }
-                dup() // copy monitor
-                invokeBeforeWait(withTimeout)
+                invokeBeforeWait()
                 val beforeWait: Label = newLabel()
                 ifZCmp(GeneratorAdapter.GT, beforeWait)
-                pop() // pop monitor
+                invokeBeforeEvent("wait")
+                invokeInternalWait(withTimeout)
                 goTo(skipWaitOrNotify)
                 visitLabel(beforeWait)
                 // restore popped arguments
@@ -887,27 +894,35 @@ internal class ManagedStrategyTransformer(
             return isNotify || isNotifyAll
         }
 
-        // STACK: monitor
-        private fun invokeBeforeWait(withTimeout: Boolean) {
-            invokeOnWaitOrNotify(BEFORE_WAIT_METHOD, withTimeout, ::WaitTracePoint, WAIT_TRACE_POINT_TYPE)
+        private fun invokeBeforeWait() {
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, WAIT_TRACE_POINT_TYPE, ::WaitTracePoint)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_WAIT_METHOD)
         }
 
         // STACK: monitor
-        private fun invokeBeforeNotify(notifyAll: Boolean) {
-            invokeOnWaitOrNotify(BEFORE_NOTIFY_METHOD, notifyAll, ::NotifyTracePoint, NOTIFY_TRACE_POINT_TYPE)
-        }
-
-        // STACK: monitor
-        private fun invokeOnWaitOrNotify(method: Method, flag: Boolean, codeLocationConstructor: CodeLocationTracePointConstructor, tracePointType: Type) {
+        private fun invokeInternalWait(withTimeout: Boolean) {
             val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
             adapter.storeLocal(monitorLocal)
             loadStrategy()
             loadCurrentThreadNumber()
-            loadNewCodeLocationAndTracePoint(null, tracePointType, codeLocationConstructor)
             adapter.loadLocal(monitorLocal)
-            adapter.push(flag)
-            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, method)
-            invokeBeforeEvent("wait/notify")
+            adapter.push(withTimeout)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, INTERNAL_WAIT_METHOD)
+        }
+
+        // STACK: monitor
+        private fun invokeBeforeNotify(notifyAll: Boolean) {
+            val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
+            adapter.storeLocal(monitorLocal)
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, NOTIFY_TRACE_POINT_TYPE, ::NotifyTracePoint)
+            adapter.loadLocal(monitorLocal)
+            adapter.push(notifyAll)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_NOTIFY_METHOD)
+            invokeBeforeEvent("notify")
         }
     }
 
@@ -1351,8 +1366,10 @@ private val CURRENT_THREAD_NUMBER_METHOD = Method.getMethod(ManagedStrategy::cur
 private val BEFORE_SHARED_VARIABLE_READ_METHOD = Method.getMethod(ManagedStrategy::beforeSharedVariableRead.javaMethod)
 private val BEFORE_SHARED_VARIABLE_WRITE_METHOD = Method.getMethod(ManagedStrategy::beforeSharedVariableWrite.javaMethod)
 private val BEFORE_LOCK_ACQUIRE_METHOD = Method.getMethod(ManagedStrategy::beforeLockAcquire.javaMethod)
+private val INTERNAL_LOCK_ACQUIRE_METHOD = Method.getMethod(ManagedStrategy::internalLockAcquire.javaMethod)
 private val BEFORE_LOCK_RELEASE_METHOD = Method.getMethod(ManagedStrategy::beforeLockRelease.javaMethod)
 private val BEFORE_WAIT_METHOD = Method.getMethod(ManagedStrategy::beforeWait.javaMethod)
+private val INTERNAL_WAIT_METHOD = Method.getMethod(ManagedStrategy::internalWait.javaMethod)
 private val BEFORE_NOTIFY_METHOD = Method.getMethod(ManagedStrategy::beforeNotify.javaMethod)
 private val BEFORE_PARK_METHOD = Method.getMethod(ManagedStrategy::beforePark.javaMethod)
 private val AFTER_UNPARK_METHOD = Method.getMethod(ManagedStrategy::afterUnpark.javaMethod)
