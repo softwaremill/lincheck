@@ -24,7 +24,6 @@ package org.jetbrains.kotlinx.lincheck.test.representation
 import org.jetbrains.kotlinx.lincheck.annotations.Operation
 import org.jetbrains.kotlinx.lincheck.test.util.runModelCheckingTestAndCheckOutput
 import org.jetbrains.kotlinx.lincheck.verifier.VerifierState
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -33,7 +32,6 @@ import org.junit.Test
  * For other classes we use simplified representation to avoid problems with concurrent modification or
  * not completely initialized objects (e.g, with `ConcurrentModificationException`)
  */
-@Ignore
 class CapturedValueRepresentationTest : VerifierState() {
     private var counter = 0
     private var outerClass1 = OuterDataClass(0)

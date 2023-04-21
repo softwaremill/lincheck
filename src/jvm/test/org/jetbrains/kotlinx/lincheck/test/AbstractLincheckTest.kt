@@ -66,10 +66,10 @@ abstract class AbstractLincheckTest(
 
     private fun <O : Options<O, *>> O.commonConfiguration(): Unit = run {
         iterations(30)
-//        actorsBefore(2)
+        actorsBefore(2)
         threads(3)
         actorsPerThread(2)
-//        actorsAfter(2)
+        actorsAfter(2)
         minimizeFailedScenario(false)
         customize()
     }
