@@ -96,7 +96,7 @@ tasks {
         jvmArgs(
             "--add-opens", "java.base/jdk.internal.misc=ALL-UNNAMED",
             "--add-exports", "java.base/jdk.internal.util=ALL-UNNAMED",
-            "-Dlincheck.debug.test=true"
+            "-Dlincheck.debug.test=true",
         )
     }
 

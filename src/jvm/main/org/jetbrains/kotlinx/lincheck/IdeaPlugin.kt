@@ -20,9 +20,6 @@
 
 package org.jetbrains.kotlinx.lincheck
 
-import org.jetbrains.kotlinx.lincheck.strategy.managed.ManagedStrategyStateHolder
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
-
 // This is org.jetbrains.kotlinx.lincheck.IdeaPluginKt class
 
 const val MINIMAL_PLUGIN_VERSION = "0.0.1"
@@ -33,9 +30,12 @@ fun testFailed(trace: Array<String>, version: String?, minimalPluginVersion: Str
 
 fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
 
-fun ideaPluginEnabled(): Boolean {
+fun ideaPluginEnabled(): Boolean { // should be replaced with `true` to debug the failure
     // treat as enabled in tests
-    return isDebuggerTestMode() // should be replaced with `true` to debug the failure
+    return isDebuggerTestMode()
+        .also {
+            if (it) println("Run Lincheck test with before events")
+        }
 }
 
 fun replay(): Boolean {
@@ -43,14 +43,11 @@ fun replay(): Boolean {
 }
 
 fun beforeEvent(eventId: Int, type: String) {
-    val strategy = (ManagedStrategyStateHolder.strategy!! as ModelCheckingStrategy)
-    strategy.enterIgnoredSection(strategy.currentThreadNumber())
     if (needVisualization()) {
         runCatching {
             visualizeInstance(testObjectPlantUMLVisualisation())
         }
     }
-    strategy.leaveIgnoredSection(strategy.currentThreadNumber())
 }
 
 fun visualizeInstance(s: String) {}

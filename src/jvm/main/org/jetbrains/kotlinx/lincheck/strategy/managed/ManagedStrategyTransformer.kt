@@ -1224,7 +1224,10 @@ internal class ManagedStrategyTransformer(
             adapter.checkCast(MODEL_CHECKING_STRATEGY_TYPE)
             adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, GET_NEXT_EVENT_ID_METHOD)
             adapter.push(type)
-            adapter.invokeStatic(IDEA_PLUGIN_TYPE, BEFORE_EVENT_METHOD)
+
+            runInIgnoredSection {
+                adapter.invokeStatic(IDEA_PLUGIN_TYPE, BEFORE_EVENT_METHOD)
+            }
 
             adapter.visitLabel(skipLabel)
         }
