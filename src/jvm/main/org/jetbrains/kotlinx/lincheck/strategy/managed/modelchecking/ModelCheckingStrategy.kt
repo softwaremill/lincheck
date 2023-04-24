@@ -76,6 +76,8 @@ internal class ModelCheckingStrategy(
 
     private class EventCounterProvider {
         var lastVisited = -1
+        var lastIncrement: IllegalStateException? = null
+        var lastRead: IllegalStateException? = null
         private var lastId = -1
         fun nextId() = ++lastId
         fun getId() = lastId
@@ -83,15 +85,31 @@ internal class ModelCheckingStrategy(
 
     private fun nextEventId() = eventIdProvider.nextId().also {
         if (isDebuggerTestMode()) {
-            check(eventIdProvider.lastVisited + 1 == it) { "nextEventId is called without readNextEventId value $it (previous read ${eventIdProvider.lastVisited})" }
+            if (eventIdProvider.lastVisited + 1 != it) {
+                val lastRead = eventIdProvider.lastRead
+                if (lastRead == null) {
+                    throw IllegalStateException("Create nextEventId $it readNextEventId has never been called")
+                } else {
+                    throw IllegalStateException("Create nextEventId $it but last read event is ${eventIdProvider.lastVisited}", lastRead)
+                }
+            }
+            eventIdProvider.lastIncrement = IllegalStateException("Last incremented value is $it")
         }
     }
     internal fun readNextEventId(): Int {
         if (!shouldInvokeBeforeEvent()) return -1
         return eventIdProvider.getId().also {
             if (isDebuggerTestMode()) {
-                check(eventIdProvider.lastVisited + 1 == it) { "readNextEventId returns unexpected value $it (previous was ${eventIdProvider.lastVisited})" }
+                if (eventIdProvider.lastVisited + 1 != it) {
+                    val lastIncrement = eventIdProvider.lastIncrement
+                    if (lastIncrement == null) {
+                        throw IllegalStateException("ReadNextEventId is called while nextEventId has never been called")
+                    } else {
+                        throw IllegalStateException("ReadNextEventId $it after previous value ${eventIdProvider.lastVisited}", lastIncrement)
+                    }
+                }
                 eventIdProvider.lastVisited = it
+                eventIdProvider.lastRead = IllegalStateException("Last read value is $it")
             }
         }
     }
@@ -99,7 +117,7 @@ internal class ModelCheckingStrategy(
     internal fun setBeforeEventId(tracePoint: TracePoint) {
         if (shouldInvokeBeforeEvent()) {
             // Method calls and atomic method calls share the same trace points
-            if (tracePoint.beforeEventId == -1) {
+            if (tracePoint.beforeEventId == -1 && tracePoint !is CoroutineCancellationTracePoint) {
                 tracePoint.beforeEventId = nextEventId()
             }
         }
