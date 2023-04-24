@@ -118,7 +118,7 @@ abstract class ManagedStrategy(
 
     private fun createRunner(): Runner =
         ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction,
-            if (this is ModelCheckingStrategy && this.replay) Long.MAX_VALUE / 2 else testCfg.timeoutMs,
+            if (this is ModelCheckingStrategy && this.replay && !isDebuggerTestMode()) Long.MAX_VALUE / 2 else testCfg.timeoutMs,
             UseClocks.ALWAYS)
 
     override fun createTransformer(cv: ClassVisitor): ClassVisitor = ManagedStrategyTransformer(
