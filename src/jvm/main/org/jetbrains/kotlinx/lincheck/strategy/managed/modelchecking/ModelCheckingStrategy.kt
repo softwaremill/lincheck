@@ -21,14 +21,11 @@
  */
 package org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking
 
-import org.jetbrains.kotlinx.lincheck.MINIMAL_PLUGIN_VERSION
+import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.execution.*
-import org.jetbrains.kotlinx.lincheck.onThreadChange
-import org.jetbrains.kotlinx.lincheck.replay
 import org.jetbrains.kotlinx.lincheck.runner.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
 import org.jetbrains.kotlinx.lincheck.strategy.managed.*
-import org.jetbrains.kotlinx.lincheck.testFailed
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import java.lang.reflect.*
 import kotlin.random.*
@@ -79,22 +76,40 @@ internal class ModelCheckingStrategy(
 
     private class EventCounterProvider {
         var lastVisited = -1
+        var lastIncrement: IllegalStateException? = null
+        var lastRead: IllegalStateException? = null
         private var lastId = -1
         fun nextId() = ++lastId
         fun getId() = lastId
     }
 
     private fun nextEventId() = eventIdProvider.nextId().also {
-        if (System.getProperty("lincheck.plugin.disable.pointId.check") == null) {
-            check(eventIdProvider.lastVisited + 1 == it) { "nextEventId is called without readNextEventId value $it (previous read ${eventIdProvider.lastVisited})" }
+        if (isDebuggerTestMode()) {
+            if (eventIdProvider.lastVisited + 1 != it) {
+                val lastRead = eventIdProvider.lastRead
+                if (lastRead == null) {
+                    throw IllegalStateException("Create nextEventId $it readNextEventId has never been called")
+                } else {
+                    throw IllegalStateException("Create nextEventId $it but last read event is ${eventIdProvider.lastVisited}", lastRead)
+                }
+            }
+            eventIdProvider.lastIncrement = IllegalStateException("Last incremented value is $it")
         }
     }
     internal fun readNextEventId(): Int {
         if (!shouldInvokeBeforeEvent()) return -1
         return eventIdProvider.getId().also {
-            if (System.getProperty("lincheck.plugin.disable.pointId.check") == null) {
-                check(eventIdProvider.lastVisited + 1 == it) { "readNextEventId returns unexpected value $it (previous was ${eventIdProvider.lastVisited})" }
+            if (isDebuggerTestMode()) {
+                if (eventIdProvider.lastVisited + 1 != it) {
+                    val lastIncrement = eventIdProvider.lastIncrement
+                    if (lastIncrement == null) {
+                        throw IllegalStateException("ReadNextEventId is called while nextEventId has never been called")
+                    } else {
+                        throw IllegalStateException("ReadNextEventId $it after previous value ${eventIdProvider.lastVisited}", lastIncrement)
+                    }
+                }
                 eventIdProvider.lastVisited = it
+                eventIdProvider.lastRead = IllegalStateException("Last read value is $it")
             }
         }
     }
@@ -102,7 +117,7 @@ internal class ModelCheckingStrategy(
     internal fun setBeforeEventId(tracePoint: TracePoint) {
         if (shouldInvokeBeforeEvent()) {
             // Method calls and atomic method calls share the same trace points
-            if (tracePoint.beforeEventId == -1) {
+            if (tracePoint.beforeEventId == -1 && tracePoint !is CoroutineCancellationTracePoint) {
                 tracePoint.beforeEventId = nextEventId()
             }
         }
@@ -138,7 +153,7 @@ internal class ModelCheckingStrategy(
                             }
                         }
                         if (representation != "") {
-                            trace.add("${node.iThread};${node.callDepth};${node.shouldBeExpanded};${beforeEventId};${representation}")
+                            trace.add("${node.iThread};${node.callDepth};${node.shouldBeExpanded(false)};${beforeEventId};${representation}")
                         }
                         node = node.next
                     }

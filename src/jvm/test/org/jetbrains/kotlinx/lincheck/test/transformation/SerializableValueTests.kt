@@ -24,6 +24,7 @@ package org.jetbrains.kotlinx.lincheck.test.transformation
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.paramgen.ParameterGenerator
+import org.jetbrains.kotlinx.lincheck.strategy.IncorrectResultsFailure
 import org.jetbrains.kotlinx.lincheck.test.AbstractLincheckTest
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -50,6 +51,24 @@ class SerializableJavaUtilResultTest : AbstractLincheckTest() {
 
     @Operation
     fun get(key: Int) = value
+
+    override fun extractState(): Any = value
+
+    override fun <O : Options<O, *>> O.customize() {
+        iterations(1)
+        actorsBefore(0)
+        actorsAfter(0)
+    }
+}
+
+class SerializableJavaUtilResultIncorrectTest : AbstractLincheckTest(IncorrectResultsFailure::class) {
+    private val value = mutableListOf(1, 2)
+
+    @Operation
+    fun get(key: Int): List<Int> {
+        value[0]++
+        return value
+    }
 
     override fun extractState(): Any = value
 
@@ -90,7 +109,26 @@ class SerializableParameterTest : AbstractLincheckTest() {
     }
 }
 
-class ValueHolderGen(conf: String) : ParameterGenerator<ValueHolder> {
+@Param(name = "key", gen = ValueHolderGen::class)
+class SerializableParameterIncorrectTest : AbstractLincheckTest(IncorrectResultsFailure::class) {
+    private var counter = 0
+
+    @Operation
+    fun operation(@Param(name = "key") key: ValueHolder): Int {
+        counter += key.value
+        return counter
+    }
+
+    override fun extractState(): Any = counter
+
+    override fun <O : Options<O, *>> O.customize() {
+        iterations(1)
+        actorsBefore(0)
+        actorsAfter(0)
+    }
+}
+
+class ValueHolderGen(randomProvider: RandomProvider, conf: String) : ParameterGenerator<ValueHolder> {
     override fun generate(): ValueHolder {
         return listOf(ValueHolder(1), ValueHolder(2)).random()
     }
@@ -110,11 +148,11 @@ class SerializableJavaUtilParameterTest : AbstractLincheckTest() {
     }
 }
 
-class JavaUtilGen(conf: String) : ParameterGenerator<List<Int>> {
+class JavaUtilGen(randomProvider: RandomProvider, conf: String) : ParameterGenerator<List<Int>> {
     override fun generate() = listOf(1, 2)
 }
 
-class ValueHolder(val value: Int) : Serializable
+data class ValueHolder(val value: Int) : Serializable
 
 @Param(name = "key", gen = NullGen::class)
 class SerializableNullParameterTest : AbstractLincheckTest() {
@@ -130,6 +168,6 @@ class SerializableNullParameterTest : AbstractLincheckTest() {
     }
 }
 
-class NullGen(conf: String) : ParameterGenerator<List<Int>?> {
+class NullGen(randomProvider: RandomProvider, conf: String) : ParameterGenerator<List<Int>?> {
     override fun generate() = null
 }

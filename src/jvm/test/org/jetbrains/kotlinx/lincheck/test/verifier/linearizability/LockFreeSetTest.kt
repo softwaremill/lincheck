@@ -54,12 +54,10 @@ class LockFreeSetTest {
             .addCustomScenario(scenario)
             .invocationsPerIteration(1000000)
             .iterations(0)
-            .requireStateEquivalenceImplCheck(false)
             .check(LockFreeSet::class)
     }
 }
 
-//@Ignore
 class LockFreeSetTest2 {
     private val set = LockFreeSet2()
     @Operation
@@ -68,7 +66,7 @@ class LockFreeSetTest2 {
     @Operation
     fun remove(key: Int) = set.remove(key)
 
-    @Test
+    @Test(expected = LincheckAssertionError::class)
     fun test() = ModelCheckingOptions()
         .actorsBefore(0)
         .actorsAfter(0)

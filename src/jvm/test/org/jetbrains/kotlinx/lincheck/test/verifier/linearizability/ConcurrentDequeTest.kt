@@ -24,11 +24,12 @@ package org.jetbrains.kotlinx.lincheck.test.verifier.linearizability
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.paramgen.*
+import org.jetbrains.kotlinx.lincheck.strategy.IncorrectResultsFailure
 import org.jetbrains.kotlinx.lincheck.test.*
 import java.util.concurrent.*
 
 @Param(name = "value", gen = IntGen::class, conf = "1:5")
-class ConcurrentDequeTest : AbstractLincheckTest() {
+class ConcurrentDequeTest : AbstractLincheckTest(IncorrectResultsFailure::class) {
     private val deque = ConcurrentLinkedDeque<Int>()
 
     @Operation
@@ -52,6 +53,6 @@ class ConcurrentDequeTest : AbstractLincheckTest() {
     override fun extractState() = deque.toList()
 
     override fun <O : Options<O, *>> O.customize() {
-        iterations(100) // more iterations, because stress strategy not always finds the bug quickly
+        iterations(200) // more iterations, because stress strategy not always finds the bug quickly
     }
 }

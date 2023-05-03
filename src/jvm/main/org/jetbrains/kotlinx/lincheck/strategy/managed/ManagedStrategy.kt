@@ -107,7 +107,8 @@ abstract class ManagedStrategy(
         runner = createRunner()
         // The managed state should be initialized before еру test class transformation.
         try {
-            initializeManagedState()
+            // Initialize ManagedStrategyStateHolder - it can be used during test class construction.
+            ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
             runner.initialize()
         } catch (t: Throwable) {
             runner.close()
@@ -117,12 +118,8 @@ abstract class ManagedStrategy(
 
     private fun createRunner(): Runner =
         ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction,
-            if (this is ModelCheckingStrategy && this.replay) Long.MAX_VALUE / 2 else testCfg.timeoutMs,
+            if (this is ModelCheckingStrategy && this.replay && !isDebuggerTestMode()) Long.MAX_VALUE / 2 else testCfg.timeoutMs,
             UseClocks.ALWAYS)
-
-    private fun initializeManagedState() {
-        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
-    }
 
     override fun createTransformer(cv: ClassVisitor): ClassVisitor = ManagedStrategyTransformer(
         cv = cv,
@@ -178,7 +175,7 @@ abstract class ManagedStrategy(
         ignoredSectionDepth.fill(0)
         callStackTrace.forEach { it.clear() }
         suspendedFunctionsStack.forEach { it.clear() }
-        ManagedStrategyStateHolder.resetState(runner.classLoader, testClass)
+        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
     }
 
     // == BASIC STRATEGY METHODS ==
@@ -219,7 +216,7 @@ abstract class ManagedStrategy(
         // `TransformationClassLoader` with a transformer that inserts the trace collection logic.
         runner.close()
         runner = createRunner()
-        initializeManagedState()
+        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
         runner.initialize()
         (this as ModelCheckingStrategy).currentInterleaving = this.currentInterleaving.copy()
         val loggedResults = runInvocation()
@@ -231,10 +228,10 @@ abstract class ManagedStrategy(
                 appendln("== Reporting the first execution without execution trace ==")
                 appendln(failingResult.toLincheckFailure(scenario, null))
                 appendln("== Reporting the second execution ==")
-                appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace, testCfg.verboseTrace)).toString())
+                appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace)).toString())
             }.toString()
         }
-        return Trace(traceCollector!!.trace, testCfg.verboseTrace)
+        return Trace(traceCollector!!.trace)
     }
 
     /**
@@ -452,10 +449,17 @@ abstract class ManagedStrategy(
      * @param codeLocation the byte-code location identifier of this operation.
      * @return whether lock should be actually acquired
      */
-    internal fun beforeLockAcquire(iThread: Int, codeLocation: Int, tracePoint: MonitorEnterTracePoint?, monitor: Any): Boolean {
+    internal fun beforeLockAcquire(iThread: Int, codeLocation: Int, tracePoint: MonitorEnterTracePoint?): Boolean {
         if (!isTestThread(iThread)) return true
         if (inIgnoredSection(iThread)) return false
         newSwitchPoint(iThread, codeLocation, tracePoint)
+        return false
+    }
+
+    /**
+     * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
+     */
+    internal fun internalLockAcquire(iThread: Int, monitor: Any) {
         // Try to acquire the monitor
         if (!monitorTracker.acquireMonitor(iThread, monitor)) {
             failIfObstructionFreedomIsRequired { "Obstruction-freedom is required but a lock has been found" }
@@ -465,7 +469,6 @@ abstract class ManagedStrategy(
             require(monitorTracker.acquireMonitor(iThread, monitor))
         }
         // The monitor is acquired, finish.
-        return false
     }
 
     /**
@@ -506,20 +509,26 @@ abstract class ManagedStrategy(
     /**
      * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      * @param codeLocation the byte-code location identifier of this operation.
-     * @param withTimeout `true` if is invoked with timeout, `false` otherwise.
      * @return whether `Object.wait` should be executed
      */
-    internal fun beforeWait(iThread: Int, codeLocation: Int, tracePoint: WaitTracePoint?, monitor: Any, withTimeout: Boolean): Boolean {
+    internal fun beforeWait(iThread: Int, codeLocation: Int, tracePoint: WaitTracePoint?): Boolean {
         if (!isTestThread(iThread)) return true
         if (inIgnoredSection(iThread)) return false
         newSwitchPoint(iThread, codeLocation, tracePoint)
+        return false
+    }
+
+    /**
+     * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
+     * @param withTimeout `true` if is invoked with timeout, `false` otherwise.
+     */
+    internal fun internalWait(iThread: Int, monitor: Any, withTimeout: Boolean) {
         failIfObstructionFreedomIsRequired { "Obstruction-freedom is required but a waiting on a monitor block has been found" }
-        if (withTimeout) return false // timeouts occur instantly
+        if (withTimeout) return // timeouts occur instantly
         monitorTracker.waitOnMonitor(iThread, monitor)
         // switch to another thread and wait till a notify event happens
         switchCurrentThread(iThread, SwitchReason.MONITOR_WAIT, true)
         require(monitorTracker.acquireMonitor(iThread, monitor)) // acquire the lock again
-        return false
     }
 
     /**

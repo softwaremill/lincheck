@@ -33,8 +33,14 @@ const val MINIMAL_PLUGIN_VERSION = "0.0.1"
 fun testFailed(trace: Array<String>, version: String?, minimalPluginVersion: String) {
 }
 
-fun ideaPluginEnabled(): Boolean {
-    return false // should be replaced with `true` to debug the failure
+fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
+
+fun ideaPluginEnabled(): Boolean { // should be replaced with `true` to debug the failure
+    // treat as enabled in tests
+    return isDebuggerTestMode()
+        .also {
+            if (it) println("Run Lincheck test with before events")
+        }
 }
 
 fun replay(): Boolean {

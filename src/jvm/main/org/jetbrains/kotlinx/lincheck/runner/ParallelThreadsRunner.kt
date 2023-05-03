@@ -28,7 +28,6 @@ import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.runner.FixedActiveThreadsExecutor.TestThread
 import org.jetbrains.kotlinx.lincheck.runner.UseClocks.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
 import org.objectweb.asm.*
 import java.lang.reflect.*
 import java.util.concurrent.*
@@ -309,11 +308,13 @@ internal open class ParallelThreadsRunner(
             result
         }
         val afterPostStateRepresentation = constructStateRepresentation()
+        // Combine the results and convert them for the standard class loader (if of non-primitive types).
+        // We do not want the byte-code transformation to be known outside of runner and strategy classes.
         val results = ExecutionResult(
             initResults, afterInitStateRepresentation,
             parallelResultsWithClock, afterParallelStateRepresentation,
             postResults, afterPostStateRepresentation
-        )
+        ).convertForLoader(LinChecker::class.java.classLoader)
         return CompletedInvocationResult(results)
     }
 
