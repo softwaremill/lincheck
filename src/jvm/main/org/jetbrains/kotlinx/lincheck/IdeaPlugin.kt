@@ -48,8 +48,6 @@ fun replay(): Boolean {
 }
 
 fun beforeEvent(eventId: Int, type: String) {
-    val strategy = (ManagedStrategyStateHolder.strategy!! as ModelCheckingStrategy)
-    strategy.enterIgnoredSection(strategy.currentThreadNumber())
     if (needVisualization()) {
         runCatching {
             val testObject =
@@ -63,7 +61,6 @@ fun beforeEvent(eventId: Int, type: String) {
             visualizeInstance(testObject, labelsMap, continuationToLincheckThreadIdMap, threadToLincheckThreadIdMap)
         }
     }
-    strategy.leaveIgnoredSection(strategy.currentThreadNumber())
 }
 
 private fun createObjectToNumberMap(testObject: Any): Array<Any> {
