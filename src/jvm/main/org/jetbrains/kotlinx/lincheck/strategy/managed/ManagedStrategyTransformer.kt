@@ -1231,6 +1231,8 @@ internal class ManagedStrategyTransformer(
             adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, GET_NEXT_EVENT_ID_METHOD)
             adapter.push(type)
 
+            loadStrategy()
+
             runInIgnoredSection {
                 adapter.invokeStatic(IDEA_PLUGIN_TYPE, BEFORE_EVENT_METHOD)
             }
@@ -1328,7 +1330,7 @@ internal val TRANSFORMED_JAVA_UTIL_INTERFACES = setOf(
     "java/util/spi/ResourceBundleControlProvider"
 )
 
-private val BEFORE_EVENT_METHOD = Method.getMethod(Class.forName("org.jetbrains.kotlinx.lincheck.IdeaPluginKt").getMethod("beforeEvent", Int::class.java, String::class.java))
+private val BEFORE_EVENT_METHOD = Method.getMethod(Class.forName("org.jetbrains.kotlinx.lincheck.IdeaPluginKt").getMethod("beforeEvent", Int::class.java, String::class.java, Object::class.java))
 private val IDEA_PLUGIN_TYPE = Type.getType(Class.forName("org.jetbrains.kotlinx.lincheck.IdeaPluginKt"))
 
 private val OBJECT_TYPE = Type.getType(Any::class.java)

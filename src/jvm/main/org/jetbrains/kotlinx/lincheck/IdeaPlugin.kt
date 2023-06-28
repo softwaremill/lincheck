@@ -10,15 +10,20 @@
 
 package org.jetbrains.kotlinx.lincheck
 
+import org.jetbrains.kotlinx.lincheck.runner.FixedActiveThreadsExecutor
+import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
+
 // This is org.jetbrains.kotlinx.lincheck.IdeaPluginKt class
 
 const val MINIMAL_PLUGIN_VERSION = "0.0.1"
 
-// Invoked by Lincheck after the minimization is applied
+// ============== This methods are used by debugger from IDEA plugin to communicate with Lincheck ============== //
+
+// Invoked by Lincheck after the minimization is applied.
+@Suppress("UNUSED_PARAMETER")
 fun testFailed(trace: Array<String>, version: String?, minimalPluginVersion: String) {
 }
-
-fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
 
 fun ideaPluginEnabled(): Boolean { // should be replaced with `true` to debug the failure
     // treat as enabled in tests
@@ -32,14 +37,70 @@ fun replay(): Boolean {
     return false // should be replaced with `true` to replay the failure
 }
 
-fun beforeEvent(eventId: Int, type: String) {
+@Suppress("UNUSED_PARAMETER", "unused")
+fun beforeEvent(eventId: Int, type: String, strategyObject: Any) {
     if (needVisualization()) {
-        // Not implemented yet
-        // visualizeInstance(...)
+        visualize(strategyObject)
     }
 }
 
-fun visualizeInstance(s: String) {}
+@Suppress("UNUSED_PARAMETER")
+fun visualizeInstance(
+    testObject: Any,
+    numbersArrayMap: Array<Any>,
+    threadsArrayMap: Array<Any>,
+    threadToLincheckThreadIdMap: Array<Any>
+) {
+}
+
 fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
 
 fun onThreadChange() {}
+
+// ======================================================================================================== //
+
+fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
+
+private fun visualize(strategyObject: Any) = runCatching {
+    val strategy = strategyObject as ModelCheckingStrategy
+    val runner = strategy.runner as ParallelThreadsRunner
+    val testObject = runner.testInstance
+    val threads = runner.executor.threads
+
+    val labelsMap = createObjectToNumberMap(testObject)
+    val continuationToLincheckThreadIdMap = createContinuationToThreadIdMap(threads)
+    val threadToLincheckThreadIdMap = createThreadToLincheckThreadIdMap(threads)
+
+    visualizeInstance(testObject, labelsMap, continuationToLincheckThreadIdMap, threadToLincheckThreadIdMap)
+}
+
+private fun createObjectToNumberMap(testObject: Any): Array<Any> {
+    val resultArray = arrayListOf<Any>()
+
+    val numbersMap = traverseTestObject(testObject)
+    numbersMap.forEach { (labeledObject, label) -> // getObjectNumbersMap()
+        resultArray.add(labeledObject)
+        resultArray.add(label)
+    }
+    return resultArray.toTypedArray()
+}
+
+private fun createThreadToLincheckThreadIdMap(threads: Array<FixedActiveThreadsExecutor.TestThread>): Array<Any> {
+    val array = arrayListOf<Any>()
+    for (thread in threads) {
+        array.add(thread)
+        array.add(thread.iThread)
+    }
+
+    return array.toTypedArray()
+}
+
+private fun createContinuationToThreadIdMap(threads: Array<FixedActiveThreadsExecutor.TestThread>): Array<Any> {
+    val array = arrayListOf<Any>()
+    for (thread in threads) {
+        array.add(thread.cont ?: continue)
+        array.add(thread.iThread)
+    }
+
+    return array.toTypedArray()
+}
