@@ -29,11 +29,11 @@ import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelChecki
 
 const val MINIMAL_PLUGIN_VERSION = "0.0.1"
 
+// ============== This methods are used by debugger from IDEA plugin to communicate with Lincheck ============== //
+
 // Invoked by Lincheck after the minimization is applied. DO NOT FORGET TO TURN OFF THE RUNNER TIMEOUTS.
 fun testFailed(trace: Array<String>, version: String?, minimalPluginVersion: String) {
 }
-
-fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
 
 fun ideaPluginEnabled(): Boolean { // should be replaced with `true` to debug the failure
     // treat as enabled in tests
@@ -49,20 +49,37 @@ fun replay(): Boolean {
 
 fun beforeEvent(eventId: Int, type: String) {
     if (needVisualization()) {
-        runCatching {
-            val testObject =
-                ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
-
-            val labelsMap = createObjectToNumberMap(testObject)
-            val threads = executorThreads()
-            val continuationToLincheckThreadIdMap = createContinuationToThreadIdMap(threads)
-            val threadToLincheckThreadIdMap = createThreadToLincheckThreadIdMap(threads)
-
-            visualizeInstance(testObject, labelsMap, continuationToLincheckThreadIdMap, threadToLincheckThreadIdMap)
-        }
+        visualize()
     }
 }
 
+fun visualizeInstance(
+    testObject: Any,
+    numbersArrayMap: Array<Any>,
+    threadsArrayMap: Array<Any>,
+    threadToLincheckThreadIdMap: Array<Any>
+) {
+}
+
+fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
+
+fun onThreadChange() {}
+
+// ======================================================================================================== //
+
+private fun visualize() = runCatching {
+    val testObject =
+        ((ManagedStrategyStateHolder.strategy as ModelCheckingStrategy).runner as ParallelThreadsRunner).testInstance
+
+    val labelsMap = createObjectToNumberMap(testObject)
+    val threads = executorThreads()
+    val continuationToLincheckThreadIdMap = createContinuationToThreadIdMap(threads)
+    val threadToLincheckThreadIdMap = createThreadToLincheckThreadIdMap(threads)
+
+    visualizeInstance(testObject, labelsMap, continuationToLincheckThreadIdMap, threadToLincheckThreadIdMap)
+}
+
+fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
 private fun createObjectToNumberMap(testObject: Any): Array<Any> {
     val resultArray = arrayListOf<Any>()
 
@@ -105,14 +122,3 @@ private fun createContinuationToThreadIdMap(threads: List<FixedActiveThreadsExec
 
     return array.toTypedArray()
 }
-
-
-fun visualizeInstance(
-    testObject: Any,
-    numbersArrayMap: Array<Any>,
-    threadsArrayMap: Array<Any>,
-    threadToLincheckThreadIdMap: Array<Any>
-) {}
-fun needVisualization(): Boolean = false // may be replaced with 'true' in plugin
-
-fun onThreadChange() {}
