@@ -95,7 +95,9 @@ tasks {
         jvmArgs(
             "--add-opens", "java.base/jdk.internal.misc=ALL-UNNAMED",
             "--add-exports", "java.base/jdk.internal.util=ALL-UNNAMED",
-            "--add-exports", "java.base/sun.security.action=ALL-UNNAMED"
+            "--add-exports", "java.base/sun.security.action=ALL-UNNAMED",
+            "-Xmx4g",
+            "-Dlincheck.debug.test=true",
         )
     }
 
@@ -103,10 +105,12 @@ tasks {
         manifest {
             val inceptionYear: String by project
             val lastCopyrightYear: String by project
+            val version: String by project
             attributes(
                 "Copyright" to
                         "Copyright (C) 2015 - 2019 Devexperts, LLC\n                                " +
-                        "Copyright (C) $inceptionYear - $lastCopyrightYear JetBrains, s.r.o."
+                        "Copyright (C) $inceptionYear - $lastCopyrightYear JetBrains, s.r.o.",
+                "Implementation-Version" to version
             )
         }
     }

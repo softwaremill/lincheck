@@ -12,6 +12,7 @@ package org.jetbrains.kotlinx.lincheck
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingCTestConfiguration
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import kotlin.reflect.*
 
@@ -75,7 +76,13 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
             val failure = scenario.run(this, verifier)
             if (failure != null) {
                 val minimizedFailedIteration = if (!minimizeFailedScenario) failure else failure.minimize(this)
-                reporter.logFailedIteration(minimizedFailedIteration)
+                if (ideaPluginEnabled() && this is ModelCheckingCTestConfiguration) {
+                    reporter.logFailedIterationWarn(minimizedFailedIteration)
+                    withReplay()
+                    minimizedFailedIteration.scenario.run(this, verifier)
+                } else {
+                    reporter.logFailedIteration(minimizedFailedIteration)
+                }
                 return minimizedFailedIteration
             }
             // Reset the parameter generator ranges to start with the same initial bounds on each scenario generation.

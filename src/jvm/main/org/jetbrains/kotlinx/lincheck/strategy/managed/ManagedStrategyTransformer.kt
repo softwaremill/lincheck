@@ -11,6 +11,7 @@ package org.jetbrains.kotlinx.lincheck.strategy.managed
 
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.TransformationClassLoader.*
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
 import org.objectweb.asm.*
 import org.objectweb.asm.Opcodes.*
 import org.objectweb.asm.Type
@@ -260,6 +261,7 @@ internal class ManagedStrategyTransformer(
         private fun beforeSharedVariableWrite(fieldName: String? = null, desc: String) {
             val tracePointLocal = newTracePointLocal()
             invokeBeforeSharedVariableWrite(fieldName, tracePointLocal)
+            invokeBeforeEvent("SharedVariableWrite")
             captureWrittenValue(desc, tracePointLocal)
         }
 
@@ -301,9 +303,11 @@ internal class ManagedStrategyTransformer(
             else -> throw IllegalStateException("Unexpected opcode: $opcode")
         }
 
-        private fun invokeBeforeSharedVariableRead(fieldName: String? = null, tracePointLocal: Int?) =
+        private fun invokeBeforeSharedVariableRead(fieldName: String? = null, tracePointLocal: Int?) {
             invokeBeforeSharedVariableReadOrWrite(BEFORE_SHARED_VARIABLE_READ_METHOD, tracePointLocal, READ_TRACE_POINT_TYPE) { iThread, actorId, callStackTrace, ste -> ReadTracePoint(iThread, actorId, callStackTrace, fieldName, ste)
             }
+            invokeBeforeEvent("SharedVariableRead")
+        }
 
         private fun invokeBeforeSharedVariableWrite(fieldName: String? = null, tracePointLocal: Int?) =
             invokeBeforeSharedVariableReadOrWrite(BEFORE_SHARED_VARIABLE_WRITE_METHOD, tracePointLocal, WRITE_TRACE_POINT_TYPE) { iThread, actorId, callStackTrace, ste -> WriteTracePoint(iThread, actorId, callStackTrace, fieldName, ste)
@@ -348,6 +352,7 @@ internal class ManagedStrategyTransformer(
                 }
                 ManagedGuaranteeType.TREAT_AS_ATOMIC -> {
                     invokeBeforeAtomicMethodCall()
+                    invokeBeforeEvent("method call $methodName")
                     runInIgnoredSection {
                         adapter.visitMethodInsn(opcode, owner, name, desc, itf)
                     }
@@ -382,15 +387,19 @@ internal class ManagedStrategyTransformer(
      */
     private inner class ClassInitializationTransformer(methodName: String, adapter: GeneratorAdapter) : ManagedStrategyMethodVisitor(methodName, adapter)  {
         private val isClinit = methodName == "<clinit>"
+        // TODO look for a better fix
+        // Debugger executes toString() to render data,
+        // we do not want to have breakpoints there
+        private val isToString = methodName == "toString"
 
         override fun visitCode() {
-            if (isClinit)
+            if (isClinit || isToString)
                 invokeBeforeIgnoredSectionEntering()
             mv.visitCode()
         }
 
         override fun visitInsn(opcode: Int) {
-            if (isClinit) {
+            if (isClinit || isToString) {
                 when (opcode) {
                     ARETURN, DRETURN, FRETURN, IRETURN, LRETURN, RETURN -> invokeAfterIgnoredSectionLeaving()
                     else -> { }
@@ -696,14 +705,13 @@ internal class ManagedStrategyTransformer(
                 MONITORENTER -> {
                     val opEnd = newLabel()
                     val skipMonitorEnter: Label = newLabel()
-                    dup()
                     invokeBeforeLockAcquire()
                     // check whether the lock should be really acquired
                     ifZCmp(GeneratorAdapter.EQ, skipMonitorEnter)
                     monitorEnter()
                     goTo(opEnd)
                     visitLabel(skipMonitorEnter)
-                    pop()
+                    invokeInternalLockAcquire()
                     visitLabel(opEnd)
                 }
                 MONITOREXIT -> {
@@ -723,25 +731,34 @@ internal class ManagedStrategyTransformer(
             }
         }
 
-        // STACK: monitor
         private fun invokeBeforeLockAcquire() {
-            invokeBeforeLockAcquireOrRelease(BEFORE_LOCK_ACQUIRE_METHOD, ::MonitorEnterTracePoint, MONITORENTER_TRACE_POINT_TYPE)
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, MONITORENTER_TRACE_POINT_TYPE, ::MonitorEnterTracePoint)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_LOCK_ACQUIRE_METHOD)
+            invokeBeforeEvent("lock")
         }
 
         // STACK: monitor
-        private fun invokeBeforeLockRelease() {
-            invokeBeforeLockAcquireOrRelease(BEFORE_LOCK_RELEASE_METHOD, ::MonitorExitTracePoint, MONITOREXIT_TRACE_POINT_TYPE)
-        }
-
-        // STACK: monitor
-        private fun invokeBeforeLockAcquireOrRelease(method: Method, codeLocationConstructor: CodeLocationTracePointConstructor, tracePointType: Type) {
+        private fun invokeInternalLockAcquire() {
             val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
             adapter.storeLocal(monitorLocal)
             loadStrategy()
             loadCurrentThreadNumber()
-            loadNewCodeLocationAndTracePoint(null, tracePointType, codeLocationConstructor)
             adapter.loadLocal(monitorLocal)
-            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, method)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, INTERNAL_LOCK_ACQUIRE_METHOD)
+        }
+
+        // STACK: monitor
+        private fun invokeBeforeLockRelease() {
+            val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
+            adapter.storeLocal(monitorLocal)
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, MONITOREXIT_TRACE_POINT_TYPE, ::MonitorExitTracePoint)
+            adapter.loadLocal(monitorLocal)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_LOCK_RELEASE_METHOD)
+            invokeBeforeEvent("unlock")
         }
     }
 
@@ -823,11 +840,11 @@ internal class ManagedStrategyTransformer(
                         storeLocal(firstArgument)
                     }
                 }
-                dup() // copy monitor
-                invokeBeforeWait(withTimeout)
+                invokeBeforeWait()
                 val beforeWait: Label = newLabel()
                 ifZCmp(GeneratorAdapter.GT, beforeWait)
-                pop() // pop monitor
+                invokeBeforeEvent("wait")
+                invokeInternalWait(withTimeout)
                 goTo(skipWaitOrNotify)
                 visitLabel(beforeWait)
                 // restore popped arguments
@@ -868,26 +885,35 @@ internal class ManagedStrategyTransformer(
             return isNotify || isNotifyAll
         }
 
-        // STACK: monitor
-        private fun invokeBeforeWait(withTimeout: Boolean) {
-            invokeOnWaitOrNotify(BEFORE_WAIT_METHOD, withTimeout, ::WaitTracePoint, WAIT_TRACE_POINT_TYPE)
+        private fun invokeBeforeWait() {
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, WAIT_TRACE_POINT_TYPE, ::WaitTracePoint)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_WAIT_METHOD)
         }
 
         // STACK: monitor
-        private fun invokeBeforeNotify(notifyAll: Boolean) {
-            invokeOnWaitOrNotify(BEFORE_NOTIFY_METHOD, notifyAll, ::NotifyTracePoint, NOTIFY_TRACE_POINT_TYPE)
-        }
-
-        // STACK: monitor
-        private fun invokeOnWaitOrNotify(method: Method, flag: Boolean, codeLocationConstructor: CodeLocationTracePointConstructor, tracePointType: Type) {
+        private fun invokeInternalWait(withTimeout: Boolean) {
             val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
             adapter.storeLocal(monitorLocal)
             loadStrategy()
             loadCurrentThreadNumber()
-            loadNewCodeLocationAndTracePoint(null, tracePointType, codeLocationConstructor)
             adapter.loadLocal(monitorLocal)
-            adapter.push(flag)
-            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, method)
+            adapter.push(withTimeout)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, INTERNAL_WAIT_METHOD)
+        }
+
+        // STACK: monitor
+        private fun invokeBeforeNotify(notifyAll: Boolean) {
+            val monitorLocal: Int = adapter.newLocal(OBJECT_TYPE)
+            adapter.storeLocal(monitorLocal)
+            loadStrategy()
+            loadCurrentThreadNumber()
+            loadNewCodeLocationAndTracePoint(null, NOTIFY_TRACE_POINT_TYPE, ::NotifyTracePoint)
+            adapter.loadLocal(monitorLocal)
+            adapter.push(notifyAll)
+            adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_NOTIFY_METHOD)
+            invokeBeforeEvent("notify")
         }
     }
 
@@ -945,6 +971,7 @@ internal class ManagedStrategyTransformer(
             loadNewCodeLocationAndTracePoint(null, PARK_TRACE_POINT_TYPE, ::ParkTracePoint)
             adapter.loadLocal(withTimeoutLocal)
             adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, BEFORE_PARK_METHOD)
+            invokeBeforeEvent("park")
         }
 
         // STACK: thread
@@ -956,6 +983,7 @@ internal class ManagedStrategyTransformer(
             loadNewCodeLocationAndTracePoint(null, UNPARK_TRACE_POINT_TYPE, ::UnparkTracePoint)
             adapter.loadLocal(threadLocal)
             adapter.invokeVirtual(MANAGED_STRATEGY_TYPE, AFTER_UNPARK_METHOD)
+            invokeBeforeEvent("unpark")
         }
     }
 
@@ -1190,6 +1218,26 @@ internal class ManagedStrategyTransformer(
                 null
             }
 
+        protected fun invokeBeforeEvent(type: String) {
+            val skipLabel: Label = adapter.newLabel()
+
+            loadStrategy()
+            adapter.checkCast(MODEL_CHECKING_STRATEGY_TYPE)
+            adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, SHOULD_INVOKE_BEFORE_EVENT_METHOD)
+            adapter.ifZCmp(GeneratorAdapter.EQ, skipLabel)
+
+            loadStrategy()
+            adapter.checkCast(MODEL_CHECKING_STRATEGY_TYPE)
+            adapter.invokeVirtual(MODEL_CHECKING_STRATEGY_TYPE, GET_NEXT_EVENT_ID_METHOD)
+            adapter.push(type)
+
+            runInIgnoredSection {
+                adapter.invokeStatic(IDEA_PLUGIN_TYPE, BEFORE_EVENT_METHOD)
+            }
+
+            adapter.visitLabel(skipLabel)
+        }
+
         /**
          * Generated code is equal to
          * ```
@@ -1280,10 +1328,14 @@ internal val TRANSFORMED_JAVA_UTIL_INTERFACES = setOf(
     "java/util/spi/ResourceBundleControlProvider"
 )
 
+private val BEFORE_EVENT_METHOD = Method.getMethod(Class.forName("org.jetbrains.kotlinx.lincheck.IdeaPluginKt").getMethod("beforeEvent", Int::class.java, String::class.java))
+private val IDEA_PLUGIN_TYPE = Type.getType(Class.forName("org.jetbrains.kotlinx.lincheck.IdeaPluginKt"))
+
 private val OBJECT_TYPE = Type.getType(Any::class.java)
 private val THROWABLE_TYPE = Type.getType(java.lang.Throwable::class.java)
 private val MANAGED_STATE_HOLDER_TYPE = Type.getType(ManagedStrategyStateHolder::class.java)
 private val MANAGED_STRATEGY_TYPE = Type.getType(ManagedStrategy::class.java)
+private val MODEL_CHECKING_STRATEGY_TYPE = Type.getType(ModelCheckingStrategy::class.java)
 private val OBJECT_MANAGER_TYPE = Type.getType(ObjectManager::class.java)
 private val RANDOM_TYPE = Type.getType(Random::class.java)
 private val UNSAFE_HOLDER_TYPE = Type.getType(UnsafeHolder::class.java)
@@ -1305,8 +1357,10 @@ private val CURRENT_THREAD_NUMBER_METHOD = Method.getMethod(ManagedStrategy::cur
 private val BEFORE_SHARED_VARIABLE_READ_METHOD = Method.getMethod(ManagedStrategy::beforeSharedVariableRead.javaMethod)
 private val BEFORE_SHARED_VARIABLE_WRITE_METHOD = Method.getMethod(ManagedStrategy::beforeSharedVariableWrite.javaMethod)
 private val BEFORE_LOCK_ACQUIRE_METHOD = Method.getMethod(ManagedStrategy::beforeLockAcquire.javaMethod)
+private val INTERNAL_LOCK_ACQUIRE_METHOD = Method.getMethod(ManagedStrategy::internalLockAcquire.javaMethod)
 private val BEFORE_LOCK_RELEASE_METHOD = Method.getMethod(ManagedStrategy::beforeLockRelease.javaMethod)
 private val BEFORE_WAIT_METHOD = Method.getMethod(ManagedStrategy::beforeWait.javaMethod)
+private val INTERNAL_WAIT_METHOD = Method.getMethod(ManagedStrategy::internalWait.javaMethod)
 private val BEFORE_NOTIFY_METHOD = Method.getMethod(ManagedStrategy::beforeNotify.javaMethod)
 private val BEFORE_PARK_METHOD = Method.getMethod(ManagedStrategy::beforePark.javaMethod)
 private val AFTER_UNPARK_METHOD = Method.getMethod(ManagedStrategy::afterUnpark.javaMethod)
@@ -1332,6 +1386,8 @@ private val INITIALIZE_THROWN_EXCEPTION_METHOD = Method.getMethod(MethodCallTrac
 private val INITIALIZE_PARAMETERS_METHOD = Method.getMethod(MethodCallTracePoint::initializeParameters.javaMethod)
 private val INITIALIZE_OWNER_NAME_METHOD = Method.getMethod(MethodCallTracePoint::initializeOwnerName.javaMethod)
 private val NEXT_INT_METHOD = Method("nextInt", Type.INT_TYPE, emptyArray<Type>())
+private val SHOULD_INVOKE_BEFORE_EVENT_METHOD = Method.getMethod(ModelCheckingStrategy::shouldInvokeBeforeEvent.javaMethod)
+private val GET_NEXT_EVENT_ID_METHOD = Method.getMethod(ModelCheckingStrategy::readNextEventId.javaMethod)
 
 private val WRITE_KEYWORDS = listOf("set", "put", "swap", "exchange")
 
@@ -1445,6 +1501,7 @@ private fun isSuspendStateMachine(internalClassName: String): Boolean {
 }
 
 private fun isStrategyMethod(className: String) = className.startsWith("org/jetbrains/kotlinx/lincheck/strategy")
+        || className == "org/jetbrains/kotlinx/lincheck/IdeaPluginKt"
 
 private fun isAFU(owner: String) = owner.startsWith("java/util/concurrent/atomic/Atomic") && owner.endsWith("FieldUpdater")
 

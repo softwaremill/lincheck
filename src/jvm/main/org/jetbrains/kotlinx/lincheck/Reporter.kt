@@ -30,6 +30,10 @@ class Reporter(private val logLevel: LoggingLevel) {
         appendFailure(failure)
     }
 
+    fun logFailedIterationWarn(failure: LincheckFailure) = log(WARN) {
+        appendFailure(failure)
+    }
+
     fun logScenarioMinimization(scenario: ExecutionScenario) = log(INFO) {
         appendLine("\nInvalid interleaving found, trying to minimize the scenario below:")
         appendExecutionScenario(scenario)
@@ -505,6 +509,14 @@ private fun collectExceptionStackTraces(executionResult: ExecutionResult): Excep
         }
 
     return ExceptionStackTracesResult(exceptionStackTraces)
+}
+
+internal fun exceptionsOrEmpty(failure: LincheckFailure): Map<Throwable, ExceptionNumberAndStacktrace> {
+    val results = (failure as? IncorrectResultsFailure)?.results ?: return emptyMap()
+    return when (val result = collectExceptionStackTraces(results)) {
+        is ExceptionStackTracesResult -> result.exceptionStackTraces
+        is InternalLincheckBugResult -> emptyMap()
+    }
 }
 
 private fun StringBuilder.appendUnexpectedExceptionFailure(failure: UnexpectedExceptionFailure): StringBuilder {
