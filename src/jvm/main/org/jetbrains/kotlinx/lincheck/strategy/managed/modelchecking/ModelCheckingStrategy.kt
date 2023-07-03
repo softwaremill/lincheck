@@ -72,7 +72,7 @@ internal class ModelCheckingStrategy(
     }
 
     private fun nextEventId() = eventIdProvider.nextId().also {
-        if (isDebuggerTestMode()) {
+        if (isDebuggerTestMode) {
             if (eventIdProvider.lastVisited + 1 != it) {
                 val lastRead = eventIdProvider.lastRead
                 if (lastRead == null) {
@@ -87,7 +87,7 @@ internal class ModelCheckingStrategy(
     internal fun readNextEventId(): Int {
         if (!shouldInvokeBeforeEvent()) return -1
         return eventIdProvider.getId().also {
-            if (isDebuggerTestMode()) {
+            if (isDebuggerTestMode) {
                 if (eventIdProvider.lastVisited + 1 != it) {
                     val lastIncrement = eventIdProvider.lastIncrement
                     if (lastIncrement == null) {

@@ -15,7 +15,7 @@ import org.jetbrains.kotlinx.lincheck.CancellationResult.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.runner.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import org.objectweb.asm.*
 import java.io.*
@@ -111,7 +111,7 @@ abstract class ManagedStrategy(
 
     private fun createRunner(): ManagedStrategyRunner =
         ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction,
-            if (this is ModelCheckingStrategy && this.replay && !isDebuggerTestMode()) DEBUGGER_TIMEOUT else testCfg.timeoutMs,
+            if (this is ModelCheckingStrategy && this.replay && !isDebuggerTestMode) DEBUGGER_TIMEOUT else testCfg.timeoutMs,
             UseClocks.ALWAYS)
 
     override fun createTransformer(cv: ClassVisitor): ClassVisitor = ManagedStrategyTransformer(

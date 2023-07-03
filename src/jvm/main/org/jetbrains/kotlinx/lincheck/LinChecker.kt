@@ -12,7 +12,7 @@ package org.jetbrains.kotlinx.lincheck
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingCTestConfiguration
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import kotlin.reflect.*
 
@@ -77,7 +77,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
             if (failure != null) {
                 val minimizedFailedIteration = if (!minimizeFailedScenario) failure else failure.minimize(this)
                 if (ideaPluginEnabled() && this is ModelCheckingCTestConfiguration) {
-                    reporter.logFailedIterationWarn(minimizedFailedIteration)
+                    reporter.logFailedIteration(minimizedFailedIteration)
                     withReplay()
                     minimizedFailedIteration.scenario.run(this, verifier)
                 } else {

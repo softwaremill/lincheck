@@ -10,9 +10,8 @@
 
 package org.jetbrains.kotlinx.lincheck
 
-import org.jetbrains.kotlinx.lincheck.runner.FixedActiveThreadsExecutor
-import org.jetbrains.kotlinx.lincheck.runner.ParallelThreadsRunner
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingStrategy
+import org.jetbrains.kotlinx.lincheck.runner.*
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
 
 // This is org.jetbrains.kotlinx.lincheck.IdeaPluginKt class
 
@@ -27,10 +26,7 @@ fun testFailed(trace: Array<String>, version: String?, minimalPluginVersion: Str
 
 fun ideaPluginEnabled(): Boolean { // should be replaced with `true` to debug the failure
     // treat as enabled in tests
-    return isDebuggerTestMode()
-        .also {
-            if (it) println("Run Lincheck test with before events")
-        }
+    return isDebuggerTestMode
 }
 
 fun replay(): Boolean {
@@ -59,7 +55,7 @@ fun onThreadChange() {}
 
 // ======================================================================================================== //
 
-fun isDebuggerTestMode() = System.getProperty("lincheck.debug.test") != null
+internal val isDebuggerTestMode = System.getProperty("lincheck.debug.test") != null
 
 private fun visualize(strategyObject: Any) = runCatching {
     val strategy = strategyObject as ModelCheckingStrategy
