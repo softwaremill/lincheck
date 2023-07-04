@@ -77,7 +77,7 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
             if (failure != null) {
                 val minimizedFailedIteration = if (!minimizeFailedScenario) failure else failure.minimize(this)
                 if (ideaPluginEnabled() && this is ModelCheckingCTestConfiguration) {
-                    reporter.logFailedIteration(minimizedFailedIteration)
+                    reporter.logFailedIterationWarn(minimizedFailedIteration)
                     withReplay()
                     minimizedFailedIteration.scenario.run(this, verifier)
                 } else {
