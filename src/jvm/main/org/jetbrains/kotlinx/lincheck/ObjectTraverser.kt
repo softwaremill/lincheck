@@ -56,7 +56,11 @@ private fun traverseTestObject(obj: Any, visualized: MutableSet<Any>, result: Mu
                     f.name != "serialVersionUID"
         }.forEach { f ->
             try {
-                f.isAccessible = true
+                try {
+                    f.isAccessible = true
+                } catch (_: Throwable) {
+                    return@forEach
+                }
                 var value: Any? = f.get(obj)
 
                 if (isAtomic(value)) {
