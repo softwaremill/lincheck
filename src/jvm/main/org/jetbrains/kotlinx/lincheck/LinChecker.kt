@@ -44,6 +44,8 @@ class LinChecker (private val testClass: Class<*>, options: Options<*, *>?) {
      */
     internal fun checkImpl(): LincheckFailure? {
         check(testConfigurations.isNotEmpty()) { "No Lincheck test configuration to run" }
+        // We need this call to disable breakpoints until an error has been found
+        ideaPluginEnabled()
         for (testCfg in testConfigurations) {
             val failure = testCfg.checkImpl()
             if (failure != null) return failure
