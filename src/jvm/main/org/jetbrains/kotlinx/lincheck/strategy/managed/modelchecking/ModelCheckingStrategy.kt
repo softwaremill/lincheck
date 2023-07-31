@@ -116,12 +116,16 @@ internal class ModelCheckingStrategy(
     }
 
     override fun runImpl(): LincheckFailure? {
+        currentInterleaving = root.nextInterleaving() ?: return null
         while (usedInvocations < maxInvocations) {
-            // get new unexplored interleaving
-            currentInterleaving = root.nextInterleaving() ?: break
-            usedInvocations++
             // run invocation and check its results
-            checkResult(runInvocation())?.let { failure ->
+            val invocationResult = runInvocation()
+            if (suddenInvocationResult is SpinCycleFoundAndReplayRequired) {
+                currentInterleaving.rollbackAfterSpinCycleFound()
+                continue
+            }
+            usedInvocations++
+            checkResult(invocationResult)?.let { failure ->
                 if (replay && failure.trace != null) {
                     val trace = extractDebugTrace(failure, failure.trace)
                     val currentVersion = this::class.java.`package`.implementationVersion
@@ -134,6 +138,8 @@ internal class ModelCheckingStrategy(
                 }
                 return failure
             }
+            // get new unexplored interleaving
+            currentInterleaving = root.nextInterleaving() ?: break
         }
         return null
     }
@@ -348,6 +354,10 @@ internal class ModelCheckingStrategy(
             }
         }
 
+        fun rollbackAfterSpinCycleFound() {
+            lastNotInitializedNodeChoices?.clear()
+        }
+
         fun copy() = Interleaving(switchPositions, threadSwitchChoices, lastNotInitializedNode)
 
         fun chooseThread(iThread: Int): Int =
@@ -359,7 +369,8 @@ internal class ModelCheckingStrategy(
                 // This can happen if there were forced thread switches after the last predefined one
                 // (e.g., thread end, coroutine suspension, acquiring an already acquired lock or monitor.wait).
                 // We use a deterministic random here to choose the next thread.
-                lastNotInitializedNodeChoices = null // end of execution position choosing initialization because of new switch
+                lastNotInitializedNodeChoices =
+                    null // end of execution position choosing initialization because of new switch
                 switchableThreads(iThread).random(interleavingFinishingRandom)
             }
 
