@@ -386,7 +386,7 @@ internal class CallNode(
         }
 }
 
-private class ActorNode(
+internal class ActorNode(
     indentationFactory: IndentationFactory,
     iThread: Int,
     last: TraceNode?,
@@ -409,7 +409,7 @@ private class ActorNode(
     }
 }
 
-private class ActorResultNode(
+internal class ActorResultNode(
     indentationFactory: IndentationFactory,
     iThread: Int,
     last: TraceNode?,
