@@ -27,7 +27,7 @@ data class Trace(val trace: List<TracePoint>)
  * [callStackTrace] helps to understand whether two events
  * happened in the same, nested, or disjoint methods.
  */
-sealed class TracePoint(val iThread: Int, val actorId: Int, internal val callStackTrace: CallStackTrace, var beforeEventId: Int = -1) {
+sealed class TracePoint(val iThread: Int, val actorId: Int, internal var callStackTrace: CallStackTrace, var beforeEventId: Int = -1) {
     internal abstract fun toStringImpl(verbose: Boolean = true): String
     override fun toString(): String = toStringImpl()
 }
@@ -280,6 +280,7 @@ internal enum class SwitchReason(private val reason: String) {
     MONITOR_WAIT("wait on monitor"),
     LOCK_WAIT("lock is already acquired"),
     ACTIVE_LOCK("active lock detected"),
+    ACTIVE_LOCK_RECURSIVE("active recursive lock detected"),
     SUSPENDED("coroutine is suspended"),
     STRATEGY_SWITCH("");
 
