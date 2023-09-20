@@ -11,14 +11,11 @@ package org.jetbrains.kotlinx.lincheck.test.representation
 
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.annotations.Operation
-import org.jetbrains.kotlinx.lincheck.strategy.managed.*
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
 import org.jetbrains.kotlinx.lincheck.test.*
-
-import org.jetbrains.kotlinx.lincheck.test.util.runModelCheckingTestAndCheckOutput
+import org.jetbrains.kotlinx.lincheck.test.util.*
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import org.junit.*
-import java.lang.StringBuilder
 
 /**
  * This test checks interleaving reporting features related to methods, such as reporting of atomic functions with
@@ -68,14 +65,11 @@ class MethodReportingTest : VerifierState() {
             .actorsPerThread(1)
             .actorsBefore(0)
             .actorsAfter(0)
-            .addGuarantee(forClasses(this::class.java.name).methods("inc").treatAsAtomic())
-            .addGuarantee(forClasses(this::class.java.name).methods("ignored").ignore())
         val failure = options.checkImpl(this::class.java)
         check(failure != null) { "the test should fail" }
         val log = StringBuilder().appendFailure(failure).toString()
         check("uselessIncrements(2) at" in log) { "increments in uselessIncrements method should be compressed" }
         check("inc(): " in log) { "treated as atomic methods should be reported" }
-        check("ignored" !in log) { "ignored methods should not be present in log" }
         check("nonPrimitiveParameter(IllegalStateException@1)" in log)
         check("nonPrimitiveResult(): IllegalStateException@2" in log)
         checkTraceHasNoLincheckEvents(log)
@@ -113,5 +107,4 @@ class CaughtExceptionMethodReportingTest : VerifierState() {
         actorsBefore(0)
         actorsAfter(0)
     }
-
 }

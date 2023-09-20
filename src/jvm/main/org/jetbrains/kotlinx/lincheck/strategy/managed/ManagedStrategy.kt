@@ -11,16 +11,20 @@ package org.jetbrains.kotlinx.lincheck.strategy.managed
 
 import kotlinx.coroutines.*
 import org.jetbrains.kotlinx.lincheck.*
-import org.jetbrains.kotlinx.lincheck.CancellationResult.*
 import org.jetbrains.kotlinx.lincheck.execution.*
 import org.jetbrains.kotlinx.lincheck.runner.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
+import org.jetbrains.kotlinx.lincheck.transformation.*
+import org.jetbrains.kotlinx.lincheck.util.*
+import org.jetbrains.kotlinx.lincheck.util.CancellationResult.*
 import org.jetbrains.kotlinx.lincheck.verifier.*
-import org.objectweb.asm.*
-import java.io.*
+import sun.nio.ch.lincheck.*
+import java.lang.invoke.*
 import java.lang.reflect.*
 import java.util.*
-import kotlin.collections.set
+import java.util.concurrent.atomic.*
+import kotlin.reflect.full.*
+import kotlin.reflect.jvm.*
 
 /**
  * This is an abstraction for all managed strategies, which encapsulated
@@ -37,15 +41,12 @@ abstract class ManagedStrategy(
     private val validationFunctions: List<Method>,
     private val stateRepresentationFunction: Method?,
     private val testCfg: ManagedCTestConfiguration
-) : Strategy(scenario), Closeable {
+) : Strategy(scenario), SharedEventsTracker {
     // The number of parallel threads.
     protected val nThreads: Int = scenario.parallelExecution.size
     // Runner for scenario invocations,
     // can be replaced with a new one for trace construction.
-    private var runner: Runner
-    // Shares location ids between class transformers in order
-    // to keep them different in different code locations.
-    private val codeLocationIdProvider = CodeLocationIdProvider()
+    private val runner = createRunner()
 
     // == EXECUTION CONTROL FIELDS ==
 
@@ -58,8 +59,6 @@ abstract class ManagedStrategy(
     private val isSuspended = BooleanArray(nThreads) { false }
     // Current actor id for each thread.
     protected val currentActorId = IntArray(nThreads)
-    // Ihe number of entered but not left (yet) blocks that should be ignored by the strategy analysis for each thread.
-    private val ignoredSectionDepth = IntArray(nThreads) { 0 }
     // Detector of loops or hangs (i.e. active locks).
     private lateinit var loopDetector: LoopDetector
     // Tracker of acquisitions and releases of monitors.
@@ -71,13 +70,8 @@ abstract class ManagedStrategy(
 
     // == TRACE CONSTRUCTION FIELDS ==
 
-    // Whether an additional information requires for the trace construction should be collected.
+    // Whether additional information requires for the trace construction should be collected.
     private var collectTrace = false
-    // Whether state representations (see `@StateRepresentation`) should be collected after interleaving events.
-    private val collectStateRepresentation get() = collectTrace && stateRepresentationFunction != null
-    // Trace point constructors, where `tracePointConstructors[id]`
-    // stores a constructor for the corresponding code location.
-    private val tracePointConstructors: MutableList<TracePointConstructor> = ArrayList()
     // Collector of all events in the execution such as thread switches.
     private var traceCollector: TraceCollector? = null // null when `collectTrace` is false
     // Stores the currently executing methods call stack for each thread.
@@ -90,33 +84,14 @@ abstract class ManagedStrategy(
     // correspond to the same method call in the trace.
     private val suspendedFunctionsStack = Array(nThreads) { mutableListOf<Int>() }
 
-    init {
-        runner = createRunner()
-        // The managed state should be initialized before еру test class transformation.
-        try {
-            // Initialize ManagedStrategyStateHolder - it can be used during test class construction.
-            ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
-            runner.initialize()
-        } catch (t: Throwable) {
-            runner.close()
-            throw t
-        }
-    }
-
-    private fun createRunner(): Runner =
-        ManagedStrategyRunner(this, testClass, validationFunctions, stateRepresentationFunction, testCfg.timeoutMs, UseClocks.ALWAYS)
-
-    override fun createTransformer(cv: ClassVisitor): ClassVisitor = ManagedStrategyTransformer(
-        cv = cv,
-        tracePointConstructors = tracePointConstructors,
-        guarantees = testCfg.guarantees,
-        eliminateLocalObjects = testCfg.eliminateLocalObjects,
-        collectStateRepresentation = collectStateRepresentation,
-        constructTraceRepresentation = collectTrace,
-        codeLocationIdProvider = codeLocationIdProvider
+    private fun createRunner() = ManagedStrategyRunner(
+        managedStrategy = this,
+        testClass = testClass,
+        validationFunctions = validationFunctions,
+        stateRepresentationMethod = stateRepresentationFunction,
+        timeoutMs = testCfg.timeoutMs,
+        useClocks = UseClocks.ALWAYS
     )
-
-    override fun needsTransformation(): Boolean = true
 
     override fun run(): LincheckFailure? = runImpl().also { close() }
 
@@ -157,10 +132,13 @@ abstract class ManagedStrategy(
         monitorTracker = MonitorTracker(nThreads)
         traceCollector = if (collectTrace) TraceCollector() else null
         suddenInvocationResult = null
-        ignoredSectionDepth.fill(0)
         callStackTrace.forEach { it.clear() }
         suspendedFunctionsStack.forEach { it.clear() }
-        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
+        randoms.forEachIndexed { i, r -> r.setSeed(i + 239L) }
+        (runner as ParallelThreadsRunner).executor.threads.forEach {
+            it.sharedEventsTracker = this
+        }
+        localObjectManager = LocalObjectManager()
     }
 
     // == BASIC STRATEGY METHODS ==
@@ -195,24 +173,17 @@ abstract class ManagedStrategy(
             // except for the strange cases such as Runner's timeout or exceptions in LinCheck.
             return null
         }
-        // Re-transform class constructing trace
         collectTrace = true
-        // Replace the current runner with a new one in order to use a new
-        // `TransformationClassLoader` with a transformer that inserts the trace collection logic.
-        runner.close()
-        runner = createRunner()
-        ManagedStrategyStateHolder.setState(runner.classLoader, this, testClass)
-        runner.initialize()
         val loggedResults = runInvocation()
         val sameResultTypes = loggedResults.javaClass == failingResult.javaClass
         val sameResults = loggedResults !is CompletedInvocationResult || failingResult !is CompletedInvocationResult || loggedResults.results == failingResult.results
         check(sameResultTypes && sameResults) {
             StringBuilder().apply {
-                appendln("Non-determinism found. Probably caused by non-deterministic code (WeakHashMap, Object.hashCode, etc).")
-                appendln("== Reporting the first execution without execution trace ==")
-                appendln(failingResult.toLincheckFailure(scenario, null))
-                appendln("== Reporting the second execution ==")
-                appendln(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace)).toString())
+                appendLine("Non-determinism found. Probably caused by non-deterministic code (WeakHashMap, Object.hashCode, etc).")
+                appendLine("== Reporting the first execution without execution trace ==")
+                appendLine(failingResult.toLincheckFailure(scenario, null))
+                appendLine("== Reporting the second execution ==")
+                appendLine(loggedResults.toLincheckFailure(scenario, Trace(traceCollector!!.trace)).toString())
             }.toString()
         }
         return Trace(traceCollector!!.trace)
@@ -268,8 +239,7 @@ abstract class ManagedStrategy(
      * @param codeLocation the byte-code location identifier of the point in code.
      */
     private fun newSwitchPoint(iThread: Int, codeLocation: Int, tracePoint: TracePoint?) {
-        if (!isTestThread(iThread)) return // can switch only test threads
-        if (inIgnoredSection(iThread)) return // cannot suspend in ignored sections
+        if (suddenInvocationResult != null) return
         check(iThread == currentThread)
         var isLoop = false
         if (loopDetector.visitCodeLocation(iThread, codeLocation)) {
@@ -281,6 +251,7 @@ abstract class ManagedStrategy(
             checkLiveLockHappened(loopDetector.totalOperations)
             isLoop = true
         }
+        if (suddenInvocationResult != null) return
         val shouldSwitch = shouldSwitch(iThread) or isLoop
         if (shouldSwitch) {
             val reason = if (isLoop) SwitchReason.ACTIVE_LOCK else SwitchReason.STRATEGY_SWITCH
@@ -303,6 +274,8 @@ abstract class ManagedStrategy(
      * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      */
     open fun onFinish(iThread: Int) {
+        (Thread.currentThread() as TestThread).inTestingCode = false
+        traceCollector?.addStateRepresentation()
         awaitTurn(iThread)
         finished[iThread] = true
         traceCollector?.finishThread(iThread)
@@ -315,28 +288,33 @@ abstract class ManagedStrategy(
      * @param exception the exception that was thrown
      */
     open fun onFailure(iThread: Int, exception: Throwable) {
+        (Thread.currentThread() as TestThread).inTestingCode = false
         // Despite the fact that the corresponding failure will be detected by the runner,
         // the managed strategy can construct a trace to reproduce this failure.
         // Let's then store the corresponding failing result and construct the trace.
         if (exception === ForcibleExecutionFinishException) return // not a forcible execution finish
-        suddenInvocationResult = UnexpectedExceptionInvocationResult(wrapInvalidAccessFromUnnamedModuleExceptionWithDescription(exception))
+        suddenInvocationResult = UnexpectedExceptionInvocationResult(exception)
     }
 
     override fun onActorStart(iThread: Int) {
+        val t = (Thread.currentThread() as TestThread)
+        t.inTestingCode = false
         currentActorId[iThread]++
         callStackTrace[iThread].clear()
         suspendedFunctionsStack[iThread].clear()
         loopDetector.reset(iThread)
+        t.inTestingCode = true
     }
 
     /**
      * Returns whether the specified thread is active and
      * can continue its execution (i.e. is not blocked/finished).
      */
-    private fun isActive(iThread: Int): Boolean =
-        !finished[iThread] &&
-        !monitorTracker.isWaiting(iThread) &&
-        !(isSuspended[iThread] && !runner.isCoroutineResumed(iThread, currentActorId[iThread]))
+    private fun isActive(iThread: Int): Boolean {
+        return  !finished[iThread] &&
+                !monitorTracker.isWaiting(iThread) &&
+                !(isSuspended[iThread] && !runner.isCoroutineResumed(iThread, currentActorId[iThread]))
+    }
 
     /**
      * Waits until the specified thread can continue
@@ -344,13 +322,30 @@ abstract class ManagedStrategy(
      */
     private fun awaitTurn(iThread: Int) {
         // Wait actively until the thread is allowed to continue
+        var curThread = currentThread
         var i = 0
-        while (currentThread != iThread) {
+        while (curThread != iThread) {
             // Finish forcibly if an error occurred and we already have an `InvocationResult`.
             if (suddenInvocationResult != null) throw ForcibleExecutionFinishException
+//            val t = (runner as ParallelThreadsRunner).executor.threads[curThread]
+//            check(t.iThread == curThread)
+//            if (t.state == Thread.State.BLOCKED) {
+//                synchronized(this) {
+//                    if (curThread == currentThread) {
+//                        // We need a deterministic wait to decide
+//                        switchCurrentThread(curThread, SwitchReason.STRATEGY_SWITCH, true)
+//                    }
+//                }
+//            }
+//            Thread.yield()
             if (++i % SPINNING_LOOP_ITERATIONS_BEFORE_YIELD == 0) Thread.yield()
+            curThread = currentThread
         }
     }
+
+    override fun shouldAnalyzeCurrentThread(): Boolean =
+        Thread.currentThread() in (runner as ParallelThreadsRunner).executor.threads
+
 
     /**
      * A regular context thread switch to another thread.
@@ -388,15 +383,6 @@ abstract class ManagedStrategy(
      */
     protected fun switchableThreads(iThread: Int) = (0 until nThreads).filter { it != iThread && isActive(it) }
 
-    private fun isTestThread(iThread: Int) = iThread < nThreads
-
-    /**
-     * The execution in an ignored section (added by transformer) or not in a test thread must not add switch points.
-     * Additionally, after [ForcibleExecutionFinishException] everything is ignored.
-     */
-    private fun inIgnoredSection(iThread: Int): Boolean =
-        !isTestThread(iThread) || ignoredSectionDepth[iThread] > 0 || suddenInvocationResult != null
-
     // == LISTENING METHODS ==
 
     /**
@@ -404,7 +390,7 @@ abstract class ManagedStrategy(
      * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      * @param codeLocation the byte-code location identifier of this operation.
      */
-    internal fun beforeSharedVariableRead(iThread: Int, codeLocation: Int, tracePoint: ReadTracePoint?) {
+    private fun beforeSharedVariableRead(iThread: Int, codeLocation: Int, tracePoint: ReadTracePoint?) {
         newSwitchPoint(iThread, codeLocation, tracePoint)
     }
 
@@ -413,7 +399,7 @@ abstract class ManagedStrategy(
      * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      * @param codeLocation the byte-code location identifier of this operation.
      */
-    internal fun beforeSharedVariableWrite(iThread: Int, codeLocation: Int, tracePoint: WriteTracePoint?) {
+    private fun beforeSharedVariableWrite(iThread: Int, codeLocation: Int, tracePoint: WriteTracePoint?) {
         newSwitchPoint(iThread, codeLocation, tracePoint)
     }
 
@@ -423,20 +409,17 @@ abstract class ManagedStrategy(
      * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      * @param codeLocation the byte-code location identifier of this operation.
      */
-    internal fun beforeAtomicMethodCall(iThread: Int, codeLocation: Int) {
-        if (!isTestThread(iThread)) return
+    private fun beforeAtomicMethodCall(iThread: Int, codeLocation: Int) {
         // re-use last call trace point
         newSwitchPoint(iThread, codeLocation, callStackTrace[iThread].lastOrNull()?.call)
     }
 
     /**
-     * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      * @param codeLocation the byte-code location identifier of this operation.
      * @return whether lock should be actually acquired
      */
-    internal fun beforeLockAcquire(iThread: Int, codeLocation: Int, tracePoint: MonitorEnterTracePoint?, monitor: Any): Boolean {
-        if (!isTestThread(iThread)) return true
-        if (inIgnoredSection(iThread)) return false
+    private fun beforeLockAcquire(codeLocation: Int, tracePoint: MonitorEnterTracePoint?, monitor: Any) {
+        val iThread = currentThread
         newSwitchPoint(iThread, codeLocation, tracePoint)
         // Try to acquire the monitor
         if (!monitorTracker.acquireMonitor(iThread, monitor)) {
@@ -447,32 +430,21 @@ abstract class ManagedStrategy(
             require(monitorTracker.acquireMonitor(iThread, monitor))
         }
         // The monitor is acquired, finish.
-        return false
     }
 
-    /**
-     * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
-     * @param codeLocation the byte-code location identifier of this operation.
-     * @return whether lock should be actually released
-     */
-    internal fun beforeLockRelease(iThread: Int, codeLocation: Int, tracePoint: MonitorExitTracePoint?, monitor: Any): Boolean {
-        if (!isTestThread(iThread)) return true
-        if (inIgnoredSection(iThread)) return false
+    private fun beforeLockRelease(tracePoint: MonitorExitTracePoint?, monitor: Any) {
+        if (suddenInvocationResult != null) return
         monitorTracker.releaseMonitor(monitor)
         traceCollector?.passCodeLocation(tracePoint)
-        return false
     }
 
     /**
      * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
      * @param codeLocation the byte-code location identifier of this operation.
-     * @param withTimeout `true` if is invoked with timeout, `false` otherwise.
      * @return whether park should be executed
      */
-    @Suppress("UNUSED_PARAMETER")
-    internal fun beforePark(iThread: Int, codeLocation: Int, tracePoint: ParkTracePoint?, withTimeout: Boolean): Boolean {
+    private fun beforePark(iThread: Int, codeLocation: Int, tracePoint: ParkTracePoint?) {
         newSwitchPoint(iThread, codeLocation, tracePoint)
-        return false
     }
 
     /**
@@ -480,8 +452,7 @@ abstract class ManagedStrategy(
      * @param codeLocation the byte-code location identifier of this operation.
      */
     @Suppress("UNUSED_PARAMETER")
-    internal fun afterUnpark(iThread: Int, codeLocation: Int, tracePoint: UnparkTracePoint?, thread: Any) {
-        if (!isTestThread(iThread)) return
+    private fun afterUnpark(iThread: Int, codeLocation: Int, tracePoint: UnparkTracePoint?, thread: Any) {
         traceCollector?.passCodeLocation(tracePoint)
     }
 
@@ -491,32 +462,22 @@ abstract class ManagedStrategy(
      * @param withTimeout `true` if is invoked with timeout, `false` otherwise.
      * @return whether `Object.wait` should be executed
      */
-    internal fun beforeWait(iThread: Int, codeLocation: Int, tracePoint: WaitTracePoint?, monitor: Any, withTimeout: Boolean): Boolean {
-        if (!isTestThread(iThread)) return true
-        if (inIgnoredSection(iThread)) return false
+    private fun beforeWait(iThread: Int, codeLocation: Int, tracePoint: WaitTracePoint?, monitor: Any, withTimeout: Boolean) {
         newSwitchPoint(iThread, codeLocation, tracePoint)
         failIfObstructionFreedomIsRequired { "Obstruction-freedom is required but a waiting on a monitor block has been found" }
-        if (withTimeout) return false // timeouts occur instantly
+        if (withTimeout) return // timeouts occur instantly
         monitorTracker.waitOnMonitor(iThread, monitor)
         // switch to another thread and wait till a notify event happens
         switchCurrentThread(iThread, SwitchReason.MONITOR_WAIT, true)
         require(monitorTracker.acquireMonitor(iThread, monitor)) // acquire the lock again
-        return false
     }
 
-    /**
-     * @param iThread the number of the executed thread according to the [scenario][ExecutionScenario].
-     * @param codeLocation the byte-code location identifier of this operation.
-     * @return whether `Object.notify` should be executed
-     */
-    internal fun beforeNotify(iThread: Int, codeLocation: Int, tracePoint: NotifyTracePoint?, monitor: Any, notifyAll: Boolean): Boolean {
-        if (!isTestThread(iThread)) return true
+    private fun beforeNotify(tracePoint: NotifyTracePoint?, monitor: Any, notifyAll: Boolean) {
         if (notifyAll)
             monitorTracker.notifyAll(monitor)
         else
             monitorTracker.notify(monitor)
         traceCollector?.passCodeLocation(tracePoint)
-        return false
     }
 
     /**
@@ -524,7 +485,7 @@ abstract class ManagedStrategy(
      * if a coroutine was suspended.
      * @param iThread number of invoking thread
      */
-    internal fun afterCoroutineSuspended(iThread: Int) {
+    internal fun afterCoroutineSuspended(iThread: Int) = runInIgnoredSection {
         check(currentThread == iThread)
         isSuspended[iThread] = true
         if (runner.isCoroutineResumed(iThread, currentActorId[iThread])) {
@@ -541,9 +502,8 @@ abstract class ManagedStrategy(
      * if a coroutine was resumed.
      * @param iThread number of invoking thread
      */
-    internal fun afterCoroutineResumed(iThread: Int) {
-        check(currentThread == iThread)
-        isSuspended[iThread] = false
+    internal fun afterCoroutineResumed() {
+        isSuspended[currentThread] = false
     }
 
     /**
@@ -551,32 +511,11 @@ abstract class ManagedStrategy(
      * if a coroutine was cancelled.
      * @param iThread number of invoking thread
      */
-    internal fun afterCoroutineCancelled(iThread: Int) {
-        check(currentThread == iThread)
+    internal fun afterCoroutineCancelled() {
+        val iThread = currentThread
         isSuspended[iThread] = false
         // method will not be resumed after suspension, so clear prepared for resume call stack
         suspendedFunctionsStack[iThread].clear()
-    }
-
-    /**
-     * This method is invoked by a test thread
-     * before each ignored section start.
-     * These sections are determined by Strategy.ignoredEntryPoints()
-     * @param iThread number of invoking thread
-     */
-    internal fun enterIgnoredSection(iThread: Int) {
-        if (isTestThread(iThread))
-            ignoredSectionDepth[iThread]++
-    }
-
-    /**
-     * This method is invoked by a test thread
-     * after each ignored section end.
-     * @param iThread number of invoking thread
-     */
-    internal fun leaveIgnoredSection(iThread: Int) {
-        if (isTestThread(iThread))
-            ignoredSectionDepth[iThread]--
     }
 
     /**
@@ -585,24 +524,32 @@ abstract class ManagedStrategy(
      * @param codeLocation the byte-code location identifier of this invocation
      * @param iThread number of invoking thread
      */
-    @Suppress("UNUSED_PARAMETER")
-    internal fun beforeMethodCall(iThread: Int, codeLocation: Int, tracePoint: MethodCallTracePoint) {
-        if (isTestThread(iThread) && !inIgnoredSection(iThread)) {
-            check(collectTrace) { "This method should be called only when logging is enabled" }
-            val callStackTrace = callStackTrace[iThread]
-            val suspendedMethodStack = suspendedFunctionsStack[iThread]
-            val methodId = if (suspendedMethodStack.isNotEmpty()) {
-                // if there was a suspension before, then instead of creating a new identifier
-                // use the one that the suspended call had
-                val lastId = suspendedMethodStack.last()
-                suspendedMethodStack.removeAt(suspendedMethodStack.lastIndex)
-                lastId
-            } else {
-                methodCallNumber++
-            }
-            // code location of the new method call is currently the last
-            callStackTrace.add(CallStackTraceElement(tracePoint, methodId))
+    private fun beforeMethodCall(iThread: Int, codeLocation: Int, ownerName: String?, methodName: String, params: Array<Any?>) {
+        val callStackTrace = callStackTrace[iThread]
+        val suspendedMethodStack = suspendedFunctionsStack[iThread]
+        val methodId = if (suspendedMethodStack.isNotEmpty()) {
+            // if there was a suspension before, then instead of creating a new identifier
+            // use the one that the suspended call had
+            val lastId = suspendedMethodStack.last()
+            suspendedMethodStack.removeAt(suspendedMethodStack.lastIndex)
+            lastId
+        } else {
+            methodCallNumber++
         }
+        // code location of the new method call is currently the last
+        val tracePoint = MethodCallTracePoint(
+            iThread = iThread,
+            actorId = currentActorId[iThread],
+            callStackTrace = callStackTrace,
+            methodName = methodName,
+            stackTraceElement = CodeLocations.stackTrace(codeLocation)
+        ).also {
+            it.initializeParameters(params)
+        }.also {
+            it.initializeOwnerName(ownerName)
+        }
+        methodCallTracePointStack[iThread] += tracePoint
+        callStackTrace.add(CallStackTraceElement(tracePoint, methodId))
     }
 
     /**
@@ -611,32 +558,19 @@ abstract class ManagedStrategy(
      * @param iThread number of invoking thread
      * @param tracePoint the corresponding trace point for the invocation
      */
-    internal fun afterMethodCall(iThread: Int, tracePoint: MethodCallTracePoint) {
-        if (isTestThread(iThread) && !inIgnoredSection(iThread)) {
-            check(collectTrace) { "This method should be called only when logging is enabled" }
-            val callStackTrace = callStackTrace[iThread]
-            if (tracePoint.wasSuspended) {
-                // if a method call is suspended, save its identifier to reuse for continuation resuming
-                suspendedFunctionsStack[iThread].add(callStackTrace.last().identifier)
-            }
-            callStackTrace.removeAt(callStackTrace.lastIndex)
+    private fun afterMethodCall(iThread: Int, tracePoint: MethodCallTracePoint?) {
+        val callStackTrace = callStackTrace[iThread]
+        if (tracePoint!!.wasSuspended) {
+            // if a method call is suspended, save its identifier to reuse for continuation resuming
+            suspendedFunctionsStack[iThread].add(callStackTrace.last().identifier)
         }
+        callStackTrace.removeLast()
     }
 
     // == LOGGING METHODS ==
 
     /**
-     * Creates a new [TracePoint] for a visited code location.
-     * The type of the code location is defined by the used constructor.
-     * This method's invocations are inserted by transformer at each code location.
-     * @param constructorId which constructor to use for creating code location
-     * @return the created interleaving point
-     */
-    fun createTracePoint(constructorId: Int): TracePoint = doCreateTracePoint(tracePointConstructors[constructorId])
-
-    /**
      * Creates a new [CoroutineCancellationTracePoint].
-     * This method is similar to [createTracePoint] method, but also adds the new trace point to the trace.
      */
     internal fun createAndLogCancellationTracePoint(): CoroutineCancellationTracePoint? {
         if (collectTrace) {
@@ -648,38 +582,385 @@ abstract class ManagedStrategy(
     }
 
     private fun <T : TracePoint> doCreateTracePoint(constructor: (iThread: Int, actorId: Int, CallStackTrace) -> T): T {
-        val iThread = currentThreadNumber()
+        val iThread = currentThread
         // use any actor id for non-test threads
-        val actorId = if (!isTestThread(iThread)) Int.MIN_VALUE else currentActorId[iThread]
+        val actorId = currentActorId[iThread]
         return constructor(iThread, actorId, callStackTrace.getOrNull(iThread)?.toList() ?: emptyList())
-    }
-
-    /**
-     * Creates a state representation and logs it.
-     * This method invocations are inserted by transformer
-     * after each write operation and atomic method invocation.
-     */
-    fun addStateRepresentation(iThread: Int) {
-        if (!inIgnoredSection(iThread)) {
-            check(collectTrace) { "This method should be called only when logging is enabled" }
-            traceCollector?.addStateRepresentation(iThread)
-        }
     }
 
     // == UTILITY METHODS ==
 
-    /**
-     * This method is invoked by transformed via [ManagedStrategyTransformer] code,
-     * it helps to determine the number of thread we are executing on.
-     *
-     * @return the number of the current thread according to the [execution scenario][ExecutionScenario].
-     */
-    fun currentThreadNumber(): Int {
-        val t = Thread.currentThread()
-        return if (t is FixedActiveThreadsExecutor.TestThread) {
-            t.iThread
+    override fun lock(monitor: Any, codeLocation: Int): Unit = runInIgnoredSection {
+        val tracePoint = if (collectTrace) {
+            val iThread = currentThread
+            MonitorEnterTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread], CodeLocations.stackTrace(codeLocation))
         } else {
-            nThreads
+            null
+        }
+        beforeLockAcquire(codeLocation, tracePoint, monitor)
+    }
+
+    override fun unlock(monitor: Any, codeLocation: Int): Unit = runInIgnoredSection {
+        val tracePoint = if (collectTrace) {
+            val iThread = currentThread
+            MonitorExitTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread], CodeLocations.stackTrace(codeLocation))
+        } else {
+            null
+        }
+        beforeLockRelease(tracePoint, monitor)
+    }
+
+    override fun park(codeLocation: Int): Unit = runInIgnoredSection {
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            ParkTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread], CodeLocations.stackTrace(codeLocation))
+        } else {
+            null
+        }
+        beforePark(iThread, codeLocation, tracePoint)
+    }
+
+    override fun unpark(thread: Thread, codeLocation: Int): Unit = runInIgnoredSection {
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            UnparkTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread], CodeLocations.stackTrace(codeLocation))
+        } else {
+            null
+        }
+        afterUnpark(iThread, codeLocation, tracePoint, thread)
+    }
+
+    override fun wait(monitor: Any, codeLocation: Int, withTimeout: Boolean): Unit = runInIgnoredSection {
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            WaitTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread], CodeLocations.stackTrace(codeLocation))
+        } else {
+            null
+        }
+        beforeWait(iThread, codeLocation, tracePoint, monitor, withTimeout)
+    }
+
+    override fun notify(monitor: Any, codeLocation: Int, notifyAll: Boolean): Unit = runInIgnoredSection {
+        val tracePoint = if (collectTrace) {
+            val iThread = currentThread
+            NotifyTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread], CodeLocations.stackTrace(codeLocation))
+        } else {
+            null
+        }
+        beforeNotify(tracePoint, monitor, notifyAll)
+    }
+
+
+    override fun beforeReadField(obj: Any, className: String, fieldName: String, isFinal: Boolean, codeLocation: Int) {
+        if (isFinal) return
+        runInIgnoredSection {
+            if (localObjectManager.isLocalObject(obj)) return@runInIgnoredSection
+            val iThread = currentThread
+            val tracePoint = if (collectTrace) {
+                ReadTracePoint(
+                    iThread, currentActorId[iThread], callStackTrace[iThread],
+                    fieldName, CodeLocations.stackTrace(codeLocation)
+                )
+            } else {
+                null
+            }
+            if (tracePoint != null) {
+                lastReadTracePoint.set(tracePoint)
+            }
+            traceCollector?.addStateRepresentation()
+            beforeSharedVariableRead(iThread, codeLocation, tracePoint)
+        }
+    }
+
+    override fun beforeReadFieldStatic(className: String, fieldName: String, isFinal: Boolean, codeLocation: Int) {
+        if (isFinal) return
+        runInIgnoredSection {
+            val iThread = currentThread
+            val tracePoint = if (collectTrace) {
+                ReadTracePoint(
+                    iThread, currentActorId[iThread], callStackTrace[iThread],
+                    fieldName, CodeLocations.stackTrace(codeLocation)
+                )
+            } else {
+                null
+            }
+            if (tracePoint != null) {
+                lastReadTracePoint.set(tracePoint)
+            }
+            traceCollector?.addStateRepresentation()
+            beforeSharedVariableRead(iThread, codeLocation, tracePoint)
+        }
+    }
+
+    override fun beforeReadArrayElement(array: Any, index: Int, codeLocation: Int) = runInIgnoredSection {
+        if (localObjectManager.isLocalObject(array)) return@runInIgnoredSection
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            ReadTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread],
+                "Array[$index]", CodeLocations.stackTrace(codeLocation))
+        } else {
+            null
+        }
+        if (tracePoint != null) {
+            lastReadTracePoint.set(tracePoint)
+        }
+        traceCollector?.addStateRepresentation()
+        beforeSharedVariableRead(iThread, codeLocation, tracePoint)
+    }
+
+    private var lastReadTracePoint = ThreadLocal<ReadTracePoint?>()
+
+    override fun afterRead(value: Any?) {
+        if (collectTrace) {
+            runInIgnoredSection {
+                lastReadTracePoint.get()?.initializeReadValue(value)
+                lastReadTracePoint.set(null)
+            }
+        }
+    }
+
+    override fun beforeWriteField(obj: Any, className: String, fieldName: String, value: Any?, codeLocation: Int) = runInIgnoredSection {
+        localObjectManager.addDependency(obj, value)
+        if (localObjectManager.isLocalObject(obj)) {
+            return@runInIgnoredSection
+        }
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            WriteTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread],
+                fieldName, CodeLocations.stackTrace(codeLocation)).also {
+                    it.initializeWrittenValue(value)
+            }
+        } else {
+            null
+        }
+        traceCollector?.addStateRepresentation()
+        beforeSharedVariableWrite(iThread, codeLocation, tracePoint)
+    }
+
+    override fun beforeWriteFieldStatic(className: String, fieldName: String, value: Any?, codeLocation: Int): Unit = runInIgnoredSection {
+        localObjectManager.deleteLocalObject(value)
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            WriteTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread],
+                fieldName, CodeLocations.stackTrace(codeLocation)).also {
+                it.initializeWrittenValue(value)
+            }
+        } else {
+            null
+        }
+        traceCollector?.addStateRepresentation()
+        beforeSharedVariableWrite(iThread, codeLocation, tracePoint)
+    }
+
+    override fun beforeWriteArrayElement(array: Any, index: Int, value: Any?, codeLocation: Int) = runInIgnoredSection {
+        localObjectManager.addDependency(array, value)
+        if (localObjectManager.isLocalObject(array)) {
+            return@runInIgnoredSection
+        }
+        val iThread = currentThread
+        val tracePoint = if (collectTrace) {
+            WriteTracePoint(iThread, currentActorId[iThread], callStackTrace[iThread],
+                "Array[$index]", CodeLocations.stackTrace(codeLocation)).also {
+                it.initializeWrittenValue(value)
+            }
+        } else {
+            null
+        }
+        traceCollector?.addStateRepresentation()
+        beforeSharedVariableWrite(iThread, codeLocation, tracePoint)
+    }
+
+    private val randoms = (0 until nThreads + 2).map { Random(it.toLong()) }
+
+    override fun getThreadLocalRandom(): Random {
+        return randoms[currentThread]
+    }
+
+    private val methodCallTracePointStack = (0 until nThreads + 2).map { ArrayList<MethodCallTracePoint>() }
+
+    override fun onMethodCallFinishedSuccessfully(result: Any?) {
+        if (collectTrace) {
+            runInIgnoredSection {
+                val iThread = currentThread
+                val tracePoint = methodCallTracePointStack[iThread].removeLast()
+                tracePoint.initializeReturnedValue(if (result == Injections.VOID_RESULT) VoidResult else result)
+                afterMethodCall(iThread, tracePoint)
+            }
+        }
+    }
+
+    override fun onMethodCallThrewException(t: Throwable) {
+        if (collectTrace) {
+            runInIgnoredSection {
+                // We cannot simply read `thread` as Forcible???Exception can be thrown.
+                val iThread =  (Thread.currentThread() as TestThread).threadNumber
+                val tracePoint = methodCallTracePointStack[iThread].removeLast()
+                tracePoint.initializeThrownException(t)
+                afterMethodCall(iThread, tracePoint)
+            }
+        }
+    }
+
+    override fun beforeMethodCall(
+        owner: Any?,
+        className: String,
+        methodName: String,
+        codeLocation: Int,
+        params: Array<Any?>
+    ) {
+        if (owner is AtomicLongFieldUpdater<*> || owner is AtomicIntegerFieldUpdater<*> || owner is AtomicReferenceFieldUpdater<*, *>) {
+            runInIgnoredSection {
+                if (collectTrace) {
+                    traceCollector?.addStateRepresentation()
+                    val ownerName = AtomicFields.getAtomicFieldName(owner)
+                    @Suppress("NAME_SHADOWING")
+                    val params = params.drop(1).toTypedArray()
+                    beforeMethodCall(currentThread, codeLocation, ownerName, methodName, params)
+                }
+                beforeAtomicMethodCall(currentThread, codeLocation)
+            }
+        } else if (owner is VarHandle || owner is AtomicReference<*> || owner is AtomicLong || owner is AtomicBoolean
+            || owner is AtomicInteger || owner is AtomicIntegerArray || owner is AtomicLongArray || owner is AtomicReferenceArray<*>)
+        {
+            runInIgnoredSection {
+                if (collectTrace) {
+                    traceCollector?.addStateRepresentation()
+                    beforeMethodCall(currentThread, codeLocation, null, methodName, params)
+                }
+                beforeAtomicMethodCall(currentThread, codeLocation)
+            }
+        } else {
+            if (collectTrace) {
+                runInIgnoredSection {
+                    val params = if (isSuspendFunction(className, methodName, params)) params.dropLast(1).toTypedArray() else params
+                    beforeMethodCall(currentThread, codeLocation, null, methodName, params)
+                }
+            }
+        }
+    }
+
+    private fun isSuspendFunction(className: String, methodName: String, params: Array<Any?>) =
+        try {
+            getMethod(className.canonicalClassName, methodName, params)?.isSuspendable() ?: false
+        } catch (t: Throwable) {
+            false
+        }
+
+    fun getMethod(className: String, methodName: String, params: Array<Any?>): java.lang.reflect.Method? {
+        val clazz = Class.forName(className)
+
+        // Filter methods by name
+        val possibleMethods = clazz.declaredMethods.filter { it.name == methodName }
+
+        for (method in possibleMethods) {
+            val parameterTypes = method.parameterTypes
+            if (parameterTypes.size != params.size) continue
+
+            var match = true
+            for (i in parameterTypes.indices) {
+                val paramType = params[i]?.javaClass
+                if (paramType != null && !parameterTypes[i].isAssignableFrom(paramType)) {
+                    match = false
+                    break
+                }
+            }
+
+            if (match) return method
+        }
+
+        return null // or throw an exception if a match is mandatory
+    }
+
+    override fun beforeMethodCall0(owner: Any?, className: String, methodName: String, codeLocation: Int) {
+        beforeMethodCall(owner, className, methodName, codeLocation, emptyArray())
+    }
+
+    override fun beforeMethodCall1(
+        owner: Any?,
+        className: String,
+        methodName: String,
+        codeLocation: Int,
+        param1: Any?
+    ) {
+        if (collectTrace) {
+            beforeMethodCall(owner, className, methodName, codeLocation, arrayOf(param1))
+        } else {
+            beforeMethodCall(owner, className, methodName, codeLocation, emptyArray())
+        }
+    }
+
+    override fun beforeMethodCall2(
+        owner: Any?,
+        className: String,
+        methodName: String,
+        codeLocation: Int,
+        param1: Any?,
+        param2: Any?
+    ) {
+        if (collectTrace) {
+            beforeMethodCall(owner, className, methodName, codeLocation, arrayOf(param1, param2))
+        } else {
+            beforeMethodCall(owner, className, methodName, codeLocation, emptyArray())
+        }
+    }
+
+    override fun beforeMethodCall3(
+        owner: Any?,
+        className: String,
+        methodName: String,
+        codeLocation: Int,
+        param1: Any?,
+        param2: Any?,
+        param3: Any?
+    ) {
+        if (collectTrace) {
+            beforeMethodCall(owner, className, methodName, codeLocation, arrayOf(param1, param2, param3))
+        } else {
+            beforeMethodCall(owner, className, methodName, codeLocation, emptyArray())
+        }
+    }
+
+    override fun beforeMethodCall4(
+        owner: Any?,
+        className: String,
+        methodName: String,
+        codeLocation: Int,
+        param1: Any?,
+        param2: Any?,
+        param3: Any?,
+        param4: Any?
+    ) {
+        if (collectTrace) {
+            beforeMethodCall(owner, className, methodName, codeLocation, arrayOf(param1, param2, param3, param4))
+        } else {
+            beforeMethodCall(owner, className, methodName, codeLocation, emptyArray())
+        }
+    }
+
+    override fun beforeMethodCall5(
+        owner: Any?,
+        className: String,
+        methodName: String,
+        codeLocation: Int,
+        param1: Any?,
+        param2: Any?,
+        param3: Any?,
+        param4: Any?,
+        param5: Any?
+    ) {
+        if (collectTrace) {
+            beforeMethodCall(owner, className, methodName, codeLocation, arrayOf(param1, param2, param3, param4, param5))
+        } else {
+            beforeMethodCall(owner, className, methodName, codeLocation, emptyArray())
+        }
+    }
+
+    private var localObjectManager = LocalObjectManager()
+
+    override fun onNewObjectCreation(obj: Any) {
+        if (obj is String || obj is Int || obj is Long || obj is Byte || obj is Char || obj is Float || obj is Double) return
+        runInIgnoredSection {
+            localObjectManager.newObject(obj)
         }
     }
 
@@ -691,7 +972,7 @@ abstract class ManagedStrategy(
         val trace: List<TracePoint> = _trace
 
         fun newSwitch(iThread: Int, reason: SwitchReason) {
-            _trace += SwitchEventTracePoint(iThread, currentActorId[iThread], reason, callStackTrace[iThread].toList())
+            _trace += SwitchEventTracePoint(iThread, currentActorId[iThread], reason, callStackTrace[iThread])
         }
 
         fun finishThread(iThread: Int) {
@@ -703,11 +984,11 @@ abstract class ManagedStrategy(
             if (tracePoint != null) _trace += tracePoint
         }
 
-        fun addStateRepresentation(iThread: Int) {
-            val stateRepresentation = runner.constructStateRepresentation()!!
+        fun addStateRepresentation() {
+            val stateRepresentation = runner.constructStateRepresentation() ?: return
             // use call stack trace of the previous trace point
-            val callStackTrace = _trace.last().callStackTrace.toList()
-            _trace += StateRepresentationTracePoint(iThread, currentActorId[iThread], stateRepresentation, callStackTrace)
+            val callStackTrace = callStackTrace[currentThread]
+            _trace += StateRepresentationTracePoint(currentThread, currentActorId[currentThread], stateRepresentation, callStackTrace)
         }
     }
 }
@@ -721,18 +1002,15 @@ private class ManagedStrategyRunner(
     stateRepresentationMethod: Method?, timeoutMs: Long, useClocks: UseClocks
 ) : ParallelThreadsRunner(managedStrategy, testClass, validationFunctions, stateRepresentationMethod, timeoutMs, useClocks) {
     override fun onStart(iThread: Int) {
-        super.onStart(iThread)
         managedStrategy.onStart(iThread)
     }
 
     override fun onFinish(iThread: Int) {
         managedStrategy.onFinish(iThread)
-        super.onFinish(iThread)
     }
 
     override fun onFailure(iThread: Int, e: Throwable) {
         managedStrategy.onFailure(iThread, e)
-        super.onFailure(iThread, e)
     }
 
     override fun afterCoroutineSuspended(iThread: Int) {
@@ -741,22 +1019,19 @@ private class ManagedStrategyRunner(
     }
 
     override fun afterCoroutineResumed(iThread: Int) {
-        super.afterCoroutineResumed(iThread)
-        managedStrategy.afterCoroutineResumed(iThread)
+        managedStrategy.afterCoroutineResumed()
     }
 
     override fun afterCoroutineCancelled(iThread: Int) {
-        super.afterCoroutineCancelled(iThread)
-        managedStrategy.afterCoroutineCancelled(iThread)
+        managedStrategy.afterCoroutineCancelled()
     }
 
     override fun constructStateRepresentation(): String? {
+        if (stateRepresentationFunction == null) return null
         // Enter ignored section, because Runner will call transformed state representation method
-        val iThread = managedStrategy.currentThreadNumber()
-        managedStrategy.enterIgnoredSection(iThread)
-        val stateRepresentation = super.constructStateRepresentation()
-        managedStrategy.leaveIgnoredSection(iThread)
-        return stateRepresentation
+        return runInIgnoredSection {
+            super.constructStateRepresentation()
+        }
     }
 
     override fun <T> cancelByLincheck(cont: CancellableContinuation<T>, promptCancellation: Boolean): CancellationResult {
@@ -770,7 +1045,7 @@ private class ManagedStrategyRunner(
             cancellationTracePoint?.initializeCancellationResult(cancellationResult)
             // Invoke `strategy.afterCoroutineCancelled` if the coroutine was cancelled successfully.
             if (cancellationResult != CANCELLATION_FAILED)
-                managedStrategy.afterCoroutineCancelled(managedStrategy.currentThreadNumber())
+                managedStrategy.afterCoroutineCancelled()
             return cancellationResult
         } catch(e: Throwable) {
             cancellationTracePoint?.initializeException(e)
@@ -784,9 +1059,8 @@ private class ManagedStrategyRunner(
  */
 private class LoopDetector(private val hangingDetectionThreshold: Int) {
     private var lastIThread = -1 // no last thread
-    private val operationCounts = mutableMapOf<Int, Int>()
+    private val operationCounts = IntIntHashMap()
     var totalOperations = 0
-        private set
 
     /**
      * Returns `true` if a loop or a hang is detected,
@@ -800,8 +1074,8 @@ private class LoopDetector(private val hangingDetectionThreshold: Int) {
         // Ignore coroutine suspension code locations.
         if (codeLocation == COROUTINE_SUSPENSION_CODE_LOCATION) return false
         // Increment the number of times the specified code location is visited.
-        val count = operationCounts.getOrDefault(codeLocation, 0) + 1
-        operationCounts[codeLocation] = count
+        val count = operationCounts.get(codeLocation).let { if (it == -1) 0 else it } + 1
+        operationCounts.put(codeLocation, count)
         // Check whether the count exceeds the maximum number of repetitions for loop/hang detection.
         return count > hangingDetectionThreshold
     }
@@ -853,7 +1127,8 @@ private class MonitorTracker(nThreads: Int) {
     fun releaseMonitor(monitor: Any) {
         // Decrement the reentrancy depth and remove the acquisition info
         // if the monitor becomes free to acquire by another thread.
-        val ai = acquiredMonitors[monitor]!!
+        val ai = acquiredMonitors[monitor] ?:
+            error("The monitor is not acquired: $monitor")
         ai.timesAcquired--
         if (ai.timesAcquired == 0) acquiredMonitors.remove(monitor)
     }
@@ -911,6 +1186,7 @@ private class MonitorTracker(nThreads: Int) {
  * If we just leave it, then the execution will not be halted.
  * If we forcibly pass through all barriers, then we can get another exception due to being in an incorrect state.
  */
+@Suppress("JavaIoSerializableObjectMustHaveReadResolve")
 internal object ForcibleExecutionFinishException : RuntimeException() {
     // do not create a stack trace -- it simply can be unsafe
     override fun fillInStackTrace() = this

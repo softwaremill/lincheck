@@ -10,7 +10,7 @@
 package org.jetbrains.kotlinx.lincheck.strategy.stress
 
 import org.jetbrains.kotlinx.lincheck.Options
-import org.jetbrains.kotlinx.lincheck.chooseSequentialSpecification
+import org.jetbrains.kotlinx.lincheck.util.chooseSequentialSpecification
 
 /**
  * Options for [stress][StressStrategy] strategy.

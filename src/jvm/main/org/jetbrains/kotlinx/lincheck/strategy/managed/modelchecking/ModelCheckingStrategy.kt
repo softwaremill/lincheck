@@ -208,15 +208,16 @@ internal class ModelCheckingStrategy(
         private var lastNotInitializedNode: SwitchChoosingNode?
     ) {
         private lateinit var interleavingFinishingRandom: Random
-        private lateinit var nextThreadToSwitch: Iterator<Int>
         private var lastNotInitializedNodeChoices: MutableList<Choice>? = null
-        private var executionPosition: Int = 0
+        private var executionPosition = 0
+        private var nextThreadSwitchPositionId = 1
 
         fun initialize() {
             executionPosition = -1 // the first execution position will be zero
             interleavingFinishingRandom = Random(2) // random with a constant seed
-            nextThreadToSwitch = threadSwitchChoices.iterator()
-            currentThread = nextThreadToSwitch.next() // choose initial executing thread
+            currentThread = threadSwitchChoices[0] // choose initial executing thread
+            executionPosition = 0
+            nextThreadSwitchPositionId = 1
             lastNotInitializedNodeChoices = null
             lastNotInitializedNode?.let {
                 // Create a mutable list for the initialization of the not initialized node choices.
@@ -228,11 +229,11 @@ internal class ModelCheckingStrategy(
         }
 
         fun chooseThread(iThread: Int): Int =
-            if (nextThreadToSwitch.hasNext()) {
+            if (nextThreadSwitchPositionId < threadSwitchChoices.size) {
                 // Use the predefined choice.
-                val result = nextThreadToSwitch.next()
-                check(result in switchableThreads(iThread))
-                result
+                threadSwitchChoices[nextThreadSwitchPositionId].also {
+                    nextThreadSwitchPositionId++
+                }
             } else {
                 // There is no predefined choice.
                 // This can happen if there were forced thread switches after the last predefined one
@@ -242,7 +243,7 @@ internal class ModelCheckingStrategy(
                 switchableThreads(iThread).random(interleavingFinishingRandom)
             }
 
-        fun isSwitchPosition() = executionPosition in switchPositions
+        fun isSwitchPosition() = nextThreadSwitchPositionId - 1 < switchPositions.size && executionPosition == switchPositions[nextThreadSwitchPositionId - 1]
 
         /**
          * Creates a new execution position that corresponds to the current switch point.
@@ -251,7 +252,7 @@ internal class ModelCheckingStrategy(
          */
         fun newExecutionPosition(iThread: Int) {
             executionPosition++
-            if (executionPosition > switchPositions.lastOrNull() ?: -1) {
+            if (switchPositions.isEmpty() || executionPosition > switchPositions.last()) {
                 // Add a new thread choosing node corresponding to the switch at the current execution position.
                 lastNotInitializedNodeChoices?.add(Choice(ThreadChoosingNode(switchableThreads(iThread)), executionPosition))
             }

@@ -10,8 +10,8 @@
 package org.jetbrains.kotlinx.lincheck.strategy.managed
 
 import org.jetbrains.kotlinx.lincheck.*
-import org.jetbrains.kotlinx.lincheck.CancellationResult.*
-import org.jetbrains.kotlinx.lincheck.TransformationClassLoader.*
+import org.jetbrains.kotlinx.lincheck.util.*
+import org.jetbrains.kotlinx.lincheck.util.CancellationResult.*
 import java.math.*
 import kotlin.coroutines.*
 import kotlin.coroutines.intrinsics.*
@@ -27,14 +27,13 @@ data class Trace(val trace: List<TracePoint>)
  * [callStackTrace] helps to understand whether two events
  * happened in the same, nested, or disjoint methods.
  */
-sealed class TracePoint(val iThread: Int, val actorId: Int, internal val callStackTrace: CallStackTrace) {
+sealed class TracePoint(val iThread: Int, val actorId: Int, callStackTrace: CallStackTrace) {
+    internal val callStackTrace = callStackTrace.toList()
     protected abstract fun toStringImpl(): String
     override fun toString(): String = toStringImpl()
 }
 
 internal typealias CallStackTrace = List<CallStackTraceElement>
-internal typealias TracePointConstructor = (iThread: Int, actorId: Int, CallStackTrace) -> TracePoint
-internal typealias CodeLocationTracePointConstructor = (iThread: Int, actorId: Int, CallStackTrace, StackTraceElement) -> TracePoint
 
 internal class SwitchEventTracePoint(
     iThread: Int, actorId: Int,
@@ -116,7 +115,7 @@ internal class WriteTracePoint(
 internal class MethodCallTracePoint(
     iThread: Int, actorId: Int,
     callStackTrace: CallStackTrace,
-    private val methodName: String,
+    private val methodName: String, // TODO: owner
     stackTraceElement: StackTraceElement
 ) : CodeLocationTracePoint(iThread, actorId, callStackTrace, stackTraceElement) {
     private var returnedValue: Any? = NO_VALUE
@@ -133,7 +132,7 @@ internal class MethodCallTracePoint(
         if (parameters != null)
             append(parameters!!.joinToString(",", transform = ::adornedStringRepresentation))
         append(")")
-        if (returnedValue != NO_VALUE)
+        if (returnedValue != NO_VALUE && returnedValue != VoidResult)
             append(": ${adornedStringRepresentation(returnedValue)}")
         else if (thrownException != null && thrownException != ForcibleExecutionFinishException)
             append(": threw ${thrownException!!.javaClass.simpleName}")
@@ -257,8 +256,7 @@ private fun adornedStringRepresentation(any: Any?): String {
     // It is better not to use `toString` in general since
     // we usually care about references to certain objects,
     // not about the content inside them.
-    val id = getObjectNumber(any.javaClass, any)
-    return "${any.javaClass.simpleName}@$id"
+   return getObjectName(any)
 }
 
 internal enum class SwitchReason(private val reason: String) {
@@ -296,7 +294,7 @@ private val Class<out Any>?.isImmutableWithNiceToString get() = this?.canonicalN
         kotlinx.coroutines.internal.Symbol::class.java,
     ).map { it.canonicalName } +
     listOf(
-        REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.Collections.SingletonList",
-        REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.Collections.SingletonMap",
-        REMAPPED_PACKAGE_CANONICAL_NAME + "java.util.Collections.SingletonSet"
+        "java.util.Collections.SingletonList",
+        "java.util.Collections.SingletonMap",
+        "java.util.Collections.SingletonSet"
     )

@@ -101,7 +101,6 @@ class ParallelThreadsRunnerExceptionTest {
             strategy = mockStrategy(scenario), testClass = testClass, validationFunctions = emptyList(),
             stateRepresentationFunction = null, useClocks = RANDOM, timeoutMs = DEFAULT_TIMEOUT_MS
         ).use { runner ->
-            runner.initialize()
             val results = (runner.run() as CompletedInvocationResult).results
             assertTrue(results.equalsIgnoringClocks(expectedResults))
         }
@@ -126,7 +125,6 @@ class ParallelThreadsRunnerExceptionTest {
             strategy = mockStrategy(scenario), testClass = testClass, validationFunctions = emptyList(),
             stateRepresentationFunction = null, useClocks = RANDOM, timeoutMs = DEFAULT_TIMEOUT_MS
         ).use { runner ->
-            runner.initialize()
             val results = (runner.run() as CompletedInvocationResult).results
             assertTrue(results.equalsIgnoringClocks(expectedResults))
         }
@@ -145,7 +143,6 @@ class ParallelThreadsRunnerExceptionTest {
             strategy = mockStrategy(scenario), testClass = testClass, validationFunctions = emptyList(),
             stateRepresentationFunction = null, useClocks = RANDOM, timeoutMs = DEFAULT_TIMEOUT_MS
         ).use { runner ->
-            runner.initialize()
             val results = (runner.run() as CompletedInvocationResult).results
             assertTrue(results.equalsIgnoringClocks(expectedResults))
         }

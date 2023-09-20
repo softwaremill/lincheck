@@ -11,17 +11,17 @@ package org.jetbrains.kotlinx.lincheck.test
 
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
-import org.jetbrains.kotlinx.lincheck.strategy.managed.*
-import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.ModelCheckingOptions
+import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
 import org.jetbrains.kotlinx.lincheck.strategy.stress.*
 import org.jetbrains.kotlinx.lincheck.verifier.*
 import org.junit.*
+import sun.nio.ch.lincheck.*
 import kotlin.reflect.*
 
 abstract class AbstractLincheckTest(
     private vararg val expectedFailures: KClass<out LincheckFailure>
 ) : VerifierState() {
-    open fun <O: Options<O, *>> O.customize() {}
+    open fun <O : Options<O, *>> O.customize() {}
     override fun extractState(): Any = System.identityHashCode(this)
 
     private fun <O : Options<O, *>> O.runInternalTest() {
@@ -36,6 +36,10 @@ abstract class AbstractLincheckTest(
                 "This test has failed with an unexpected error: \n $failure"
             }
         }
+        // TODO: when a deadlock happens, threads remain alive. We need to fix this issue
+        // TODO: and add the check below that requires all Lincheck threads to be finished
+        // TODO: after the test completes.
+        // waitUntilAllLincheckThreadsAreFinished()
     }
 
     @Test(timeout = TIMEOUT)
@@ -68,5 +72,22 @@ private const val TIMEOUT = 100_000L
 fun checkTraceHasNoLincheckEvents(trace: String) {
     val testPackageOccurrences = trace.split("org.jetbrains.kotlinx.lincheck.test.").size - 1
     val lincheckPackageOccurrences = trace.split("org.jetbrains.kotlinx.lincheck.").size - 1
-    check(testPackageOccurrences == lincheckPackageOccurrences) { "Internal Lincheck events were found in the trace" }
+    check(testPackageOccurrences == lincheckPackageOccurrences) { "Internal Lincheck events were found in the trace: \n$trace" }
+}
+
+private fun waitUntilAllLincheckThreadsAreFinished() {
+    val deadline = System.currentTimeMillis() + 1000
+    while (true) {
+        if (Thread.getAllStackTraces().keys.filterIsInstance<TestThread>().isEmpty())
+            return
+        if (System.currentTimeMillis() > deadline) {
+            val threadDump = Thread.getAllStackTraces().filterKeys { it is TestThread }.map {
+                val threadNumber = (it.key as TestThread).threadNumber
+                val stackTrace = it.value.joinToString("\n")
+                "Thread-$threadNumber\n$stackTrace\n"
+            }.joinToString("\n")
+            error("Lincheck threads has not been finished, see the thread dump:\n$threadDump\n")
+        }
+        Thread.yield()
+    }
 }

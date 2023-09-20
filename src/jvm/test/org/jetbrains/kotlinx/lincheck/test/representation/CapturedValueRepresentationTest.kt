@@ -10,9 +10,9 @@
 package org.jetbrains.kotlinx.lincheck.test.representation
 
 import org.jetbrains.kotlinx.lincheck.annotations.Operation
-import org.jetbrains.kotlinx.lincheck.test.util.runModelCheckingTestAndCheckOutput
-import org.jetbrains.kotlinx.lincheck.verifier.VerifierState
-import org.junit.Test
+import org.jetbrains.kotlinx.lincheck.test.util.*
+import org.jetbrains.kotlinx.lincheck.verifier.*
+import org.junit.*
 
 /**
  * This test checks that values captured in an incorrect interleaving have proper representation.

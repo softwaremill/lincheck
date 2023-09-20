@@ -9,6 +9,7 @@
  */
 package org.jetbrains.kotlinx.lincheck.test.verifier.linearizability
 
+import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.paramgen.*
 import org.jetbrains.kotlinx.lincheck.test.*
@@ -16,19 +17,23 @@ import java.util.concurrent.*
 
 @Param(name = "value", gen = IntGen::class, conf = "1:5")
 class SkipListMapTest : AbstractLincheckTest() {
-    private val skiplistMap = ConcurrentSkipListMap<Int, Int>()
+    private val skiplist = ConcurrentSkipListMap<Int, Int>()
 
     @Operation
-    fun put(key: Int, value: Int) = skiplistMap.put(key, value)
+    fun put(key: Int, value: Int) = skiplist.put(key, value)
 
     @Operation
-    fun get(key: Int) = skiplistMap.get(key)
+    fun get(key: Int) = skiplist.get(key)
 
     @Operation
-    fun containsKey(key: Int) = skiplistMap.containsKey(key)
+    fun containsKey(key: Int) = skiplist.containsKey(key)
 
     @Operation
-    fun remove(key: Int) = skiplistMap.remove(key)
+    fun remove(key: Int) = skiplist.remove(key)
 
-    override fun extractState() = skiplistMap.toMap()
+    override fun <O : Options<O, *>> O.customize() {
+        // Make Lincheck deterministic in init/post parts.
+        actorsBefore(0)
+        actorsAfter(0)
+    }
 }

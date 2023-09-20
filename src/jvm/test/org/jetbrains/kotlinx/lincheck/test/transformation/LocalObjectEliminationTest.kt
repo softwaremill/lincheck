@@ -10,9 +10,8 @@
 package org.jetbrains.kotlinx.lincheck.test.transformation
 
 import org.jetbrains.kotlinx.lincheck.*
-import org.jetbrains.kotlinx.lincheck.annotations.Operation
+import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.strategy.managed.modelchecking.*
-import org.jetbrains.kotlinx.lincheck.verifier.*
 import org.junit.*
 
 /**
@@ -23,7 +22,7 @@ import org.junit.*
  * invocations is set to [Int.MAX_VALUE].
  */
 @ModelCheckingCTest(actorsBefore = 0, actorsAfter = 0, actorsPerThread = 50, invocationsPerIteration = Int.MAX_VALUE, iterations = 50)
-class LocalObjectEliminationTest : VerifierState() {
+class LocalObjectEliminationTest {
     @Operation
     fun operation(): Int {
         val a = A(0, this, IntArray(2))
@@ -45,8 +44,6 @@ class LocalObjectEliminationTest : VerifierState() {
     fun test() {
         LinChecker.check(this::class.java)
     }
-
-    override fun extractState(): Any = 0 // constant state
 
     private data class A(var value: Int, var any: Any, val array: IntArray)
 }

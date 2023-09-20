@@ -11,6 +11,7 @@ package org.jetbrains.kotlinx.lincheck.verifier.linearizability
 
 import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.execution.*
+import org.jetbrains.kotlinx.lincheck.util.*
 import org.jetbrains.kotlinx.lincheck.verifier.*
 
 /**

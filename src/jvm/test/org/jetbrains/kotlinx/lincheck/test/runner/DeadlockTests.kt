@@ -10,10 +10,10 @@
 package org.jetbrains.kotlinx.lincheck.test.runner
 
 import org.jetbrains.kotlinx.lincheck.*
-import org.jetbrains.kotlinx.lincheck.annotations.Operation
+import org.jetbrains.kotlinx.lincheck.annotations.*
 import org.jetbrains.kotlinx.lincheck.strategy.*
-import org.jetbrains.kotlinx.lincheck.test.AbstractLincheckTest
-import java.util.concurrent.atomic.AtomicBoolean
+import org.jetbrains.kotlinx.lincheck.test.*
+import java.util.concurrent.atomic.*
 
 class DeadlockOnSynchronizedTest : AbstractLincheckTest(DeadlockWithDumpFailure::class) {
     private var counter = 0

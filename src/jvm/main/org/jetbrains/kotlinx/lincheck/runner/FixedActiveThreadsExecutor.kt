@@ -10,11 +10,9 @@
 package org.jetbrains.kotlinx.lincheck.runner
 
 import kotlinx.atomicfu.*
-import kotlinx.coroutines.CancellableContinuation
-import org.jetbrains.kotlinx.lincheck.*
 import org.jetbrains.kotlinx.lincheck.execution.*
+import sun.nio.ch.lincheck.*
 import java.io.*
-import java.lang.*
 import java.util.concurrent.*
 import java.util.concurrent.locks.*
 
@@ -24,12 +22,7 @@ import java.util.concurrent.locks.*
  * is that this executor keeps the re-using threads "hot" (active) as long as
  * possible, so that they should not be parked and unparked between invocations.
  */
-internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash: Int) : Closeable {
-    /**
-     * Threads used in this runner.
-     */
-    val threads: List<TestThread>
-
+internal class FixedActiveThreadsExecutor(testName: String, private val nThreads: Int) : Closeable {
     /**
      * null, waiting TestThread, Runnable task, or SHUTDOWN
      */
@@ -47,10 +40,11 @@ internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash:
      */
     private var hangDetected = false
 
-    init {
-        threads = (0 until nThreads).map { iThread ->
-            TestThread(iThread, runnerHash, testThreadRunnable(iThread)).also { it.start() }
-        }
+    /**
+     * Threads used in this runner.
+     */
+    val threads = Array(nThreads) { iThread ->
+        TestThread(testName, iThread, testThreadRunnable(iThread)).also { it.start() }
     }
 
     /**
@@ -75,24 +69,32 @@ internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash:
     }
 
     private fun submitTask(iThread: Int, task: Any) {
-        if (tasks[iThread].compareAndSet(null, task)) return
-        // CAS failed => a test thread is parked.
-        // Submit the task and unpark the waiting thread.
-        val thread = tasks[iThread].value as TestThread
-        tasks[iThread].value = task
-        LockSupport.unpark(thread)
+        val old = tasks[iThread].getAndSet(task)
+        if (old is TestThread) {
+            LockSupport.unpark(old)
+        }
     }
 
     private fun await(timeoutMs: Long) {
         val deadline = System.currentTimeMillis() + timeoutMs
-        for (iThread in 0 until nThreads)
-            awaitTask(iThread, deadline)
+        var exception: Throwable? = null
+        for (iThread in 0 until nThreads) {
+            val e = awaitTask(iThread, deadline)
+            if (e != null) {
+                if (exception == null) {
+                    exception = e
+                } else {
+                    exception.addSuppressed(e)
+                }
+            }
+        }
+        exception?.let { throw ExecutionException(it) }
     }
 
-    private fun awaitTask(iThread: Int, deadline: Long) {
+    private fun awaitTask(iThread: Int, deadline: Long): Throwable? {
         val result = getResult(iThread, deadline)
         // Check whether there was an exception during the execution.
-        if (result != DONE) throw ExecutionException(result as Throwable)
+        return result as? Throwable
     }
 
     private fun getResult(iThread: Int, deadline: Long): Any {
@@ -124,7 +126,7 @@ internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash:
             try {
                 runnable.run()
             } catch(e: Throwable) {
-                setResult(iThread, wrapInvalidAccessFromUnnamedModuleExceptionWithDescription(e))
+                setResult(iThread, e)
                 continue@loop
             }
             setResult(iThread, DONE)
@@ -138,7 +140,7 @@ internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash:
         }
         // Park until a task is stored into `tasks[iThread]`.
         val currentThread = Thread.currentThread()
-        if (tasks[iThread].compareAndSet(null, Thread.currentThread())) {
+        if (tasks[iThread].compareAndSet(null, currentThread)) {
             while (tasks[iThread].value === currentThread) {
                 LockSupport.park()
             }
@@ -171,13 +173,9 @@ internal class FixedActiveThreadsExecutor(private val nThreads: Int, runnerHash:
             for (t in threads) t.stop()
         }
     }
-
-    class TestThread(val iThread: Int, val runnerHash: Int, r: Runnable) : Thread(r, "FixedActiveThreadsExecutor@$runnerHash-$iThread") {
-        var cont: CancellableContinuation<*>? = null
-    }
 }
 
 private const val SPINNING_LOOP_ITERATIONS_BEFORE_PARK = 1000_000
 
-private val SHUTDOWN = Any()
-private val DONE = Any()
+private val SHUTDOWN = "SHUTDOWN"
+private val DONE = "DONE"
